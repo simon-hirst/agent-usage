@@ -1,0 +1,38 @@
+# Generated Windows binaries and debugging artifacts
+*.exe
+*.pdb
+*.dll
+*.obj
+bin/
+obj/
+
+# Python runtime, tests and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime configuration and credentials: never commit OAuth files
+.env
+.env.*
+*.credentials.json
+.credentials.json
+settings.json
+*.secret
+*.secrets
+
+# Editors, OS, archives
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.zip
+*.log
+
+# Managed Qt app virtual environment & local process state
+tray.lock
+requirements-installed
+*.tmp
