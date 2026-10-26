@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.3.2 — Stabilise macOS release CI (2026-10-26)
+
+- Fix a lifecycle-test startup race on macOS x64: the simulated backend registers its SIGTERM handler before publishing its readiness marker.
+- No changes to runtime application code, provider adapters or background-process management.
+
 ## v3.3.1 — Windows SQLite cleanup fix (2026-10-26)
 
 - Close editor SQLite read connections explicitly, preventing file locks on Windows.

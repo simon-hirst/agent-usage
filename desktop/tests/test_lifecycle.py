@@ -17,11 +17,13 @@ from desktop.processes import BackendManager
 
 FAKE_SERVER = '''import os, pathlib, signal, sys, time
 root = pathlib.Path(__file__).resolve().parent.parent
-(root / 'running-pid').write_text(str(os.getpid()))
 def finish(sig, frame):
     (root / 'stopped').write_text(str(os.getpid()))
     sys.exit(0)
+# Register SIGTERM *before* writing the readiness marker. The test closes the
+# parent's pipe as soon as it sees this file; the handler must already exist.
 signal.signal(signal.SIGTERM, finish)
+(root / 'running-pid').write_text(str(os.getpid()))
 while True: time.sleep(.05)
 '''
 
