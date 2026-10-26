@@ -6,6 +6,7 @@ are restricted to fixed provider HTTPS hosts, with no redirects to other hosts.
 from __future__ import annotations
 
 import base64
+from contextlib import closing
 import datetime as dt
 import json
 import math
@@ -140,7 +141,9 @@ def read_sqlite_item(path: Path, key: str):
     from urllib.parse import quote as urlquote
     uri = 'file:' + urlquote(str(path.resolve()), safe='/:') + '?mode=ro'
     try:
-        with sqlite3.connect(uri, uri=True, timeout=2) as conn:
+        # sqlite3.Connection.__exit__ only finishes a transaction; it does NOT
+        # close the connection. Windows locks the editor database until close.
+        with closing(sqlite3.connect(uri, uri=True, timeout=2)) as conn:
             row = conn.execute('SELECT value FROM ItemTable WHERE key = ?', (key,)).fetchone()
     except sqlite3.Error:
         return None

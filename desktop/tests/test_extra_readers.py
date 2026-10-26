@@ -1,5 +1,6 @@
 """Fixtures validate read-only integrations without exposing user sessions."""
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import sys
@@ -102,10 +103,34 @@ class Tests(unittest.TestCase):
     def test_read_only_sqlite(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'state.vscdb'
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db:
                 db.execute('CREATE TABLE ItemTable (key TEXT, value TEXT)')
                 db.execute('INSERT INTO ItemTable VALUES (?, ?)', ('cursorAuth/accessToken','fake'))
+                db.commit()
             self.assertEqual(read_sqlite_item(path,'cursorAuth/accessToken'),'fake')
+            # tempfile cleanup is now safe on Windows: both connections close.
+
+    def test_read_sqlite_item_closes_connection(self):
+        """Catch leaked DB handles even on Linux where unlinking is allowed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'state.vscdb'
+            with closing(sqlite3.connect(path)) as db:
+                db.execute('CREATE TABLE ItemTable (key TEXT, value TEXT)')
+                db.execute('INSERT INTO ItemTable VALUES (?, ?)', ('test', 'value'))
+                db.commit()
+            captured = []
+            real_connect = sqlite3.connect
+
+            def tracking_connect(*args, **kwargs):
+                connection = real_connect(*args, **kwargs)
+                captured.append(connection)
+                return connection
+
+            with patch('desktop.extra_readers.sqlite3.connect', side_effect=tracking_connect):
+                self.assertEqual(read_sqlite_item(path, 'test'), 'value')
+            self.assertEqual(len(captured), 1)
+            with self.assertRaises(sqlite3.ProgrammingError):
+                captured[0].execute('SELECT 1')
 
     def test_fixed_https_host_only(self):
         with self.assertRaises(ProviderError):

@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.3.1 — Windows SQLite cleanup fix (2026-10-26)
+
+- Close editor SQLite read connections explicitly, preventing file locks on Windows.
+- Close the test fixture database before cleanup and add a regression test that detects leaked SQLite connections across operating systems.
+- No changes to provider authentication, tray display or API response formats.
+
 ## v3.3.0 — Direct provider readers (2026-10-26)
 
 - Added built-in Grok, Cursor, Windsurf, Qwen Cloud and Perplexity account readers; no external bridge processes.
