@@ -75,7 +75,7 @@ def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True,
         reason = str((snapshot or {}).get("error") or "Waiting for usage data")
         return "Unavailable — " + reason[:100]
     fragments = []
-    for field, label in (("five_hour", "5h"), ("weekly", "7d"), ("monthly", "month")):
+    for field, label in (("five_hour", "5h"), ("weekly", "7d"), ("monthly", "month"), ("daily", "day")):
         if field == "weekly" and not include_weekly:
             continue
         item = snapshot.get(field)
@@ -97,7 +97,7 @@ def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True,
     if snapshot.get("balance_text"):
         fragments.append(str(snapshot["balance_text"]))
     if snapshot.get("credit_percent") is not None:
-        fragments.append(f"{snapshot['credit_percent']:g}% of purchased credits")
+        fragments.append(f"{snapshot['credit_percent']:g}% of credit allowance left")
     return " · ".join(fragments) or "No quota windows available"
 
 
@@ -113,6 +113,9 @@ class ProviderSelection(QDialog):
         heading.setStyleSheet("font-size: 20px; font-weight: 700")
         outer.addWidget(heading)
         outer.addWidget(QLabel("Only selected providers appear in the tray and quick view."))
+        permission = QLabel("Selected account readers may access that provider’s existing local login or browser cookies.\nCredentials stay on your computer and go only to their matching provider.")
+        permission.setWordWrap(True)
+        outer.addWidget(permission)
         scrolling = QScrollArea()
         scrolling.setWidgetResizable(True)
         widget = QWidget()
@@ -317,7 +320,7 @@ class Dashboard(QDialog):
                 box.addWidget(details)
             else:
                 found = False
-                for key, label in (("five_hour", "5-hour"), ("weekly", "Weekly"), ("monthly", "Monthly")):
+                for key, label in (("five_hour", "5-hour"), ("weekly", "Weekly"), ("monthly", "Monthly"), ("daily", "Daily")):
                     value = snap.get(key)
                     if not isinstance(value, dict):
                         continue
@@ -341,7 +344,7 @@ class Dashboard(QDialog):
                     box.addWidget(QLabel("Balance: " + snap["balance_text"]))
                     found = True
                 if snap.get("credit_percent") is not None:
-                    box.addWidget(QLabel(f"Purchased credits: {snap['credit_percent']:g}% remaining"))
+                    box.addWidget(QLabel(f"Credit allowance: {snap['credit_percent']:g}% remaining"))
                     found = True
                 if not found:
                     box.addWidget(QLabel("No quota windows available for this account"))
@@ -436,7 +439,7 @@ class TrayController:
             self.merged_tray.setVisible(self.tray_available)
             return
         for service in selected_services(self.settings):
-            fields = ("five_hour", "weekly") if self.settings["show_weekly"] and service in ("codex", "claude", "muse", "kimi") else ("five_hour",)
+            fields = ("five_hour", "weekly") if self.settings["show_weekly"] and service in ("codex", "claude", "muse", "kimi", "grok", "cursor", "qwen", "windsurf") else ("five_hour",)
             for field in fields:
                 tray = QSystemTrayIcon(self.app)
                 snap = self.snapshots.get(service)
@@ -457,12 +460,17 @@ class TrayController:
         if isinstance(data, dict):
             return data.get('remaining_percent')
         if field == 'five_hour':
-            # Gemini is per-model; show the lowest remaining model bucket.
-            if service == 'gemini' and snap.get('model_quotas'):
+            # Model-based quotas (Gemini, or older Windsurf plan caches) show
+            # the most constrained bucket, not an invented five-hour limit.
+            if service in ('gemini', 'windsurf') and snap.get('model_quotas'):
                 return min(q['remaining_percent'] for q in snap['model_quotas'])
             # Copilot quota is monthly, not a five-hour window.
-            if service == 'copilot' and isinstance(snap.get('monthly'), dict):
+            if isinstance(snap.get('monthly'), dict):
                 return snap['monthly']['remaining_percent']
+            if isinstance(snap.get('daily'), dict):
+                return snap['daily']['remaining_percent']
+            if snap.get('credit_percent') is not None:
+                return snap['credit_percent']
         return None
 
     def on_activated(self, reason):
@@ -569,8 +577,8 @@ class TrayController:
         for key, value in secure_child_env().items():
             env.insert(key, value)
         proc.setProcessEnvironment(env)
-        if platform.system() == 'Windows':
-            # WSL child stdout works normally and avoids Windows/WSL file paths.
+        if platform.system() == 'Windows' and service in ('gemini', 'copilot', 'grok'):
+            # CLIs are authenticated in WSL; editor/browser logins reside on Windows.
             proc.setProgram('wsl.exe')
             proc.setArguments(['-d', self.settings['wsl_distro'], '--', 'bash', '-i', './desktop/direct-usage.sh', service])
         else:

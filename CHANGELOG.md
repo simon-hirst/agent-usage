@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.3.0 — Direct provider readers (2026-10-26)
+
+- Added built-in Grok, Cursor, Windsurf, Qwen Cloud and Perplexity account readers; no external bridge processes.
+- Added browser session access for opt-in providers and local editor state fallbacks.
+- Keep credit balances and unknown quota windows distinct from 5-hour/weekly limits.
+
 ## v3.2.0 — Direct provider readers
 
 - Add built-in Gemini Code Assist quota reader from an existing CLI OAuth session.

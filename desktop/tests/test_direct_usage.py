@@ -59,12 +59,10 @@ class DirectUsageTests(unittest.TestCase):
             subprocess_mock.assert_called_once()
             self.assertNotIn('super-secret', json.dumps(result))
 
-    def test_unsupported_providers_use_account_page_not_fake_number(self):
-        for name in ('grok', 'cursor', 'windsurf', 'qwen', 'perplexity'):
-            self.assertEqual(PROVIDERS[name]['source'], 'dashboard')
-            self.assertTrue(USAGE_PAGES[name].startswith('https://'))
-        for name in ('gemini', 'copilot'):
+    def test_new_providers_are_integrated_directly(self):
+        for name in ('grok', 'cursor', 'windsurf', 'qwen', 'perplexity', 'gemini', 'copilot'):
             self.assertEqual(PROVIDERS[name]['source'], 'direct')
+            self.assertTrue(USAGE_PAGES.get(name, 'https://provider.example').startswith('https://'))
 
     def test_wsl_shell_banners_do_not_break_json(self):
         output = b'Welcome to Debian\n\n{\"ok\":true,\"model_quotas\":[]}\n'

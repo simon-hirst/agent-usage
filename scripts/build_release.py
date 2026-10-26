@@ -21,6 +21,7 @@ NAME = 'ProviderUsageTray'
 SOURCES = [
     ('desktop/managed-wsl.sh', 'desktop'),
     ('desktop/direct_usage.py', 'desktop'),
+    ('desktop/extra_readers.py', 'desktop'),
     ('desktop/direct-usage.sh', 'desktop'),
     ('work-codex-usage-api/server.py', 'work-codex-usage-api'),
     ('claude-usage-api/server.py', 'claude-usage-api'),

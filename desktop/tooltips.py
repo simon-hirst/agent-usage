@@ -63,9 +63,16 @@ def individual_tooltip(provider: str, snapshot: Mapping[str, Any] | None,
         return "\n".join(lines)
     windows = (_window(snapshot, "five_hour"), _window(snapshot, "weekly"))
     if all(v is None for v in windows):
+        for field, tag in (('monthly','Month'),('daily','Day')):
+            d = _window(snapshot, field)
+            if d is not None:
+                reset = local_reset_time(d.get('resets_at'), timezone=timezone)
+                return f"{name} ({tag}): {_remaining(d)}\nReset {reset or 'unknown'} (local)"
         balance = snapshot.get("balance_text")
         if isinstance(balance, str) and balance:
-            return f"{name}: {balance[:80]}\nNo timed quota reset available"
+            reset = local_reset_time(snapshot.get('credit_resets_at'),timezone=timezone)
+            extra = f'\nRenews {reset} (local)' if reset else '\nNo timed quota reset available'
+            return f"{name}: {balance[:60]}{extra}"
         return f"{name} (local time)\nNo 5h or weekly reset available"
     lines = [f"{name} (local time)"]
     for label, data in zip(("5h", "7d"), windows):
@@ -99,7 +106,7 @@ def _merged_line(provider: str, snapshot: Mapping[str, Any] | None,
         if isinstance(quotas, list) and quotas:
             q = min(quotas, key=lambda q: q.get('remaining_percent', 101))
             return f"{name}: {q['remaining_percent']:g}% ({local_reset_time(q.get('resets_at'), compact=True, timezone=timezone) or '?'})"
-    for field, label in (("five_hour", "5h"), ("weekly", "7d")):
+    for field, label in (("five_hour", "5h"), ("weekly", "7d"), ("monthly", "month"), ("daily", "day")):
         item = _window(snapshot, field)
         if item is not None:
             pieces.append(f"{label} {local_reset_time(item.get('resets_at'), compact=True, timezone=timezone) or '?'}")

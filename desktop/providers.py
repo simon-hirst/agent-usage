@@ -156,14 +156,14 @@ def icon_number(result: dict[str, Any] | None, field: str = "five_hour") -> str:
 
 def normalize_direct_result(service: str, data: Any) -> dict[str, Any]:
     """Validate direct subprocess output before rendering it in the UI."""
-    if service not in ('gemini', 'copilot') or not isinstance(data, dict):
+    if service not in ('gemini', 'copilot', 'grok', 'cursor', 'windsurf', 'qwen', 'perplexity') or not isinstance(data, dict):
         raise ValueError('Invalid direct usage response')
     if data.get('ok') is False:
         raise ValueError(str(data.get('error') or 'Account unavailable')[:220])
     if data.get('ok') is not True:
         raise ValueError('Direct reader returned no account data')
     result = base_result()
-    for field in ('monthly',):
+    for field in ('five_hour', 'weekly', 'monthly', 'daily'):
         item = data.get(field)
         if isinstance(item, dict):
             result[field] = window(item.get('remaining_percent'), item.get('resets_at'))
@@ -177,7 +177,16 @@ def normalize_direct_result(service: str, data: Any) -> dict[str, Any]:
             if pct:
                 quotas.append({'name': entry['name'][:72], **pct})
         result['model_quotas'] = quotas
-    if not result.get('model_quotas') and not result.get('monthly'):
+    balance = data.get('balance_text')
+    if isinstance(balance, str) and len(balance) <= 100:
+        result['balance_text'] = balance
+    credits = data.get('credit_percent')
+    if window(credits) is not None:
+        result['credit_percent'] = float(credits)
+        reset = data.get('credit_resets_at')
+        if isinstance(reset, str):
+            result['credit_resets_at'] = reset
+    if not any(result.get(key) for key in ('model_quotas', 'five_hour', 'weekly', 'monthly', 'daily', 'balance_text')) and result.get('credit_percent') is None:
         raise ValueError('No supported quota metrics found')
     return result
 

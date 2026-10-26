@@ -44,8 +44,11 @@ For Codex/Claude on Windows, install and sign into both CLIs in **Debian WSL** (
 | **OpenRouter API** | Available API credits and percentage of purchased credits | `OPENROUTER_API_KEY` **management** key |
 | **Gemini Code Assist** | Model-specific remaining quota and reset dates | Signed-in Gemini CLI using OAuth on the same OS/WSL environment; Google CLI OAuth availability depends on account type |
 | **GitHub Copilot** | Monthly quota percentage and reset date when reported | Signed-in `gh` CLI (`gh auth login`) on same OS/WSL; uses an undocumented GitHub endpoint |
-| **Grok / Cursor** | Open shared account usage dashboard (no automatic reading) | Sign in to Grok dashboard; shared X-subscription pool, or Cursor's separate legacy plan |
-| **Windsurf / Qwen / Perplexity** | One-click account usage page; no automatic reading | Sign into the provider in your browser |
+| **Grok** | CLI billing quota (weekly/monthly/credits when reported) | `grok login` in CLI environment |
+| **Cursor** | Editor plan usage; shared Grok weekly pool on supported accounts | Signed-in Cursor editor or browser |
+| **Windsurf** | Editor-cached daily/weekly quota or named counters | Signed-in Windsurf editor |
+| **Qwen Cloud** | Individual Token Plan 5h/weekly quotas (best effort) | Signed-in Qwen Cloud browser session |
+| **Perplexity** | Remaining account credits (not search allowance) | Signed-in Perplexity browser session |
 
 **Important:** A *subscription quota*, a *rate limit* and *prepaid API credits* are different measurements. The app labels them separately and doesn't invent percentages. DeepSeek balance is shown in the popup/dashboard, not as a fake percentage. Kimi's newer plans may not have a weekly quota. Muse's CLI output is parsed conservatively and may need an updated adapter if Meta changes the format.
 
@@ -55,11 +58,12 @@ For providers that require an API key, set the relevant environment variable **b
 
 Kimi's local web server provides `GET /api/v1/oauth/usage` with a bearer token. By default the app tries `http://127.0.0.1:58627/api/v1/oauth/usage`. Start the Kimi web server, obtain its access token, and set `KIMI_SERVER_TOKEN` in the desktop app's environment. If its port differs, change the endpoint under Advanced. The app does not start Kimi or read its secrets automatically.
 
-### No extra bridge setup
+### Built-in account readers
 
 The tray includes its own Gemini and Copilot account readers. It executes the readers as short-lived subprocesses and **never runs a third-party bridge service**. On Windows, sign in to the relevant CLI **inside the configured WSL distribution**; on macOS/Linux, sign in natively. Gemini quota reads require a current CLI OAuth access token; if it has expired, open the CLI to renew it. These endpoints may change and are not guaranteed for every account.
 
-Grok/Cursor, Windsurf, Qwen and Perplexity do not currently have a verified, stable reader for the equivalent **personal subscription percentage** in this application. Selecting them adds a one-click **Open account usage page** shortcut; the tray displays `--` until a real supported reader exists. Grok and current Cursor plans can share one weekly pool, so showing separate invented balances would be misleading. API balances, if separately available, are not interchangeable with subscription use.
+The five additional providers now have opt-in readers built into the desktop app. They need no localhost bridge. Their provider-specific setup and caveats are listed below. Authentication is inherited from an existing CLI, editor or browser session rather than being stored in the tray settings.
+
 
 ## Usage and controls
 
@@ -73,13 +77,13 @@ If a value is `--`, hover for details or open the quick view. The Claude usage e
 
 ## Automated GitHub Releases
 
-On every pushed version tag (for example `v3.2.0`), `.github/workflows/release.yml` builds six native packages, smoke-tests the bundled UI and backend entrypoints, checks that all six artifacts exist, and publishes them together with SHA-256 checksums to GitHub Releases. You can also run that workflow manually for an existing tag. Release builds require no local compilation; the binaries are currently unsigned and not notarised.
+On every pushed version tag (for example `v3.3.0`), `.github/workflows/release.yml` builds six native packages, smoke-tests the bundled UI and backend entrypoints, checks that all six artifacts exist, and publishes them together with SHA-256 checksums to GitHub Releases. You can also run that workflow manually for an existing tag. Release builds require no local compilation; the binaries are currently unsigned and not notarised.
 
 To publish from a clean committed repository:
 
 ```bash
-git tag v3.2.0
-git push origin v3.2.0
+git tag v3.3.0
+git push origin v3.3.0
 ```
 
 ## Tests
@@ -91,3 +95,16 @@ python3 -m unittest discover -s claude-usage-api/tests -v
 ```
 
 MIT licensed. Unaffiliated with the listed providers.
+
+
+## Additional direct account readers (v3.3.0)
+
+Enable providers in **Choose providers / Settings**. No separate local bridge server is required. Readers reuse the selected provider’s existing local login when available and make read-only requests to that provider. Selecting a provider authorises the app to read **only that provider’s** existing local credentials/browser session; no cookies, access tokens or API keys are written to settings or returned in the UI.
+
+- **Grok:** sign into the Grok Build CLI (`grok`) on the OS where the reader runs (Debian WSL on Windows). Uses CLI billing endpoint, not xAI developer API keys.
+- **Cursor:** sign into the Cursor editor on your desktop. Reads its local state database read-only, then queries account usage; optional `CURSOR_COOKIE` environment variable if local login is not usable. New X subscriptions can have a shared Grok/Cursor weekly allowance; legacy plans can have monthly allowances.
+- **Windsurf:** sign into the Windsurf editor. Reads its cached plan/quota, so values may lag while the editor is closed. Falls back to named message/flow-action usage counters, never invents reset times.
+- **Qwen:** supported for **Qwen Cloud international individual Token Plan**, not generic Qwen chat or all ModelStudio accounts. Sign into `home.qwencloud.com` in Chrome, Edge or Firefox; optional `QWEN_CLOUD_COOKIE` and `QWEN_CLOUD_SEC_TOKEN` environment variables. The unofficial account gateway may reject sessions.
+- **Perplexity:** sign into `perplexity.ai` in Chrome, Edge or Firefox. Reads recurring/purchased credits, **not** a five-hour/weekly Pro search allowance. Optional `PERPLEXITY_COOKIE` environment variable.
+
+Browser-cookie retrieval uses `browser-cookie3` bundled with the desktop application. Protected profiles or browser-specific encryption may block automatic access; the reader reports that clearly. All these endpoints are undocumented, subject to change, and cannot be verified against an actual subscribed account by CI. The app displays unavailable instead of fabricating a quota.

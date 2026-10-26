@@ -2,7 +2,8 @@
 
 Gemini: signed-in Gemini CLI OAuth + Google's Code Assist quota RPC.
 Copilot: signed-in GitHub CLI token + GitHub's internal Copilot user endpoint.
-Both may change independently of this app. Read-only, no browser cookie extraction.
+These undocumented interfaces may change independently of this app.
+Additional selected providers can reuse existing local editor/browser login sessions.
 """
 from __future__ import annotations
 
@@ -141,6 +142,15 @@ def run(service: str, output_path: str | None = None) -> int:
             result = read_gemini()
         elif service == 'copilot':
             result = read_copilot()
+        elif service in ('grok', 'cursor', 'windsurf', 'qwen', 'perplexity'):
+            try:
+                from .extra_readers import READERS, ProviderError
+            except ImportError:
+                from extra_readers import READERS, ProviderError
+            try:
+                result = READERS[service]()
+            except ProviderError as exc:
+                raise ReaderError(str(exc)) from None
         else:
             raise ReaderError('Unknown direct reader')
     except (ReaderError, OSError, ValueError) as err:

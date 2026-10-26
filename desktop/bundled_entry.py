@@ -52,6 +52,9 @@ def verify_bundle() -> int:
         raise RuntimeError("Missing WSL supervisor")
     from PySide6.QtWidgets import QApplication
     from desktop.app import icon_for, combined_icon
+    from desktop.extra_readers import parse_grok_billing
+    if parse_grok_billing({'config': {'creditUsagePercent': 40}}).get('credit_percent') != 60:
+        raise RuntimeError('Bundled extra account readers unavailable')
     app = QApplication([])
     if combined_icon().isNull() or icon_for("codex", "five_hour", 73).isNull():
         raise RuntimeError("Qt icons failed to paint")
