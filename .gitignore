@@ -37,10 +37,15 @@ tray.lock
 requirements-installed
 *.tmp
 
-# Local Git history maintenance scripts (never publish)
+# Local repository maintenance tools
 bootstrap_git_history.py
 bootstrap_git_history_v2.0.1.py
 scrub_bootstrap_history.py
-
-# Local repository maintenance scripts
 prepare_github.py
+
+# Local release builds and packaged applications
+.release-build/
+release-assets/
+dist/
+build/
+*.spec

@@ -29,7 +29,7 @@ PROVIDERS = {
     "qwen": {"name": "Qwen", "short": "Qwen", "colour": "#AA70C4", "source": "bridge", "hint": "Requires a local usage bridge"},
     "perplexity": {"name": "Perplexity", "short": "Perplexity", "colour": "#4DAEA7", "source": "bridge", "hint": "Requires a local usage bridge"},
 }
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 APP_ID = "codex-claude-usage"
 
 

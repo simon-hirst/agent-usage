@@ -14,7 +14,7 @@ import threading
 import time
 
 THIS = Path(__file__).resolve().parent
-ROOT = THIS.parent
+ROOT = Path(getattr(sys, "_MEIPASS", THIS.parent))
 SERVICES = {"codex": "work-codex-usage-api", "claude": "claude-usage-api"}
 
 
@@ -22,7 +22,11 @@ def run(service: str) -> int:
     if service not in SERVICES:
         return 2
     folder = ROOT / SERVICES[service]
-    cmd = [sys.executable, "-u", str(folder / "server.py")]
+    if getattr(sys, "frozen", False):
+        # A release contains its own Python runtime. No system Python needed.
+        cmd = [sys.executable, "--backend-server", service]
+    else:
+        cmd = [sys.executable, "-u", str(folder / "server.py")]
     kwargs = {"cwd": folder, "stdin": subprocess.DEVNULL}
     if os.name != "nt":
         kwargs["start_new_session"] = True

@@ -39,6 +39,8 @@ class BackendManager:
             # WSL maps cwd automatically. No Windows path is passed as a shell argument.
             # bash -i sources the same profile as the user's existing CLI login.
             return ["wsl.exe", "-d", self.wsl_distro, "--", "bash", "-i", "./desktop/managed-wsl.sh", service]
+        if getattr(sys, "frozen", False):
+            return [sys.executable, "--backend-supervisor", service]
         return [sys.executable, str(self.root / "desktop" / "managed_native.py"), service]
 
     def set_selected(self, providers) -> None:

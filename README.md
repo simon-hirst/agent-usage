@@ -4,7 +4,21 @@ A small **Windows, macOS and Linux** system-tray app for tracking usage limits f
 
 **Click the tray icon** for a small usage popup. Use **Open dashboard** only when you want the full window. Right-click for the menu. Your selected providers can be changed at any time under Settings.
 
-## Install
+## Download and run
+
+Open **GitHub → Releases** and download the package for your operating system and CPU:
+
+| Operating system | Downloads |
+| --- | --- |
+| Windows 10/11 | `windows-x64.zip` or `windows-arm64.zip` |
+| macOS (Intel / Apple Silicon) | `macos-x64.app.zip` or `macos-arm64.app.zip` |
+| Linux | `linux-x64.tar.gz` or `linux-arm64.tar.gz` |
+
+**Windows:** extract the entire ZIP, then run `ProviderUsageTray.exe`. **macOS:** unzip and open `ProviderUsageTray.app` (unsigned builds may require approving it in Privacy & Security). **Linux:** extract the archive and run `./ProviderUsageTray/ProviderUsageTray` from a desktop session with a tray.
+
+You **do not need to install Python or build the application**. You still need the relevant provider CLIs/accounts: on Windows, Codex and Claude use Python 3 and authenticated CLIs **inside your configured WSL distro**; on macOS/Linux, they use the native CLI logins. Optional providers have their own setup requirements below.
+
+### Running from source (developers)
 
 Requires Python 3.10+. The launcher installs the Qt desktop dependency on first run.
 
@@ -62,6 +76,17 @@ Fields can be `null` or omitted if unavailable. The app only accepts **HTTP loca
 - Both original `/get` APIs remain available at `http://127.0.0.1:3789/get` and `http://127.0.0.1:3790/get` while running.
 
 If a value is `--`, hover for details or open the quick view. The Claude usage endpoint is undocumented and can be rate-limited. On GNOME/Wayland, install an AppIndicator extension if your system doesn't show tray icons.
+
+## Automated GitHub Releases
+
+On every pushed version tag (for example `v3.1.0`), `.github/workflows/release.yml` builds six native packages, smoke-tests the bundled UI and backend entrypoints, checks that all six artifacts exist, and publishes them together with SHA-256 checksums to GitHub Releases. You can also run that workflow manually for an existing tag. Release builds require no local compilation; the binaries are currently unsigned and not notarised.
+
+To publish from a clean committed repository:
+
+```bash
+git tag v3.1.0
+git push origin v3.1.0
+```
 
 ## Tests
 

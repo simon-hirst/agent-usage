@@ -1,3 +1,10 @@
+## v3.1.0 — Native downloadable releases
+
+- Added automated six-platform GitHub Releases for Windows, macOS and Linux on x64 and ARM64.
+- Added frozen application backend dispatch and startup registration for the standalone binaries.
+- Bundled the Codex and Claude Python services and WSL supervisor with the app.
+- Added compiled-app smoke checks and a SHA-256 checksum manifest.
+
 # Changelog
 
 ## v3.0.0 — Selectable providers and compact tray popup (2026-10-26)

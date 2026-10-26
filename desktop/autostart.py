@@ -41,13 +41,18 @@ def set_enabled(enable: bool, root: Path = ROOT, system: str | None = None,
                 home: Path | None = None) -> None:
     system = system or platform.system()
     root = Path(root).resolve()
+    frozen = bool(getattr(sys, "frozen", False))
+    executable = Path(sys.executable).resolve()
     if system == "Windows":
         import winreg
         if enable:
             # Hidden PowerShell bootstrap handles huge env blocks and doesn't
             # leave a foreground console window open.
             shell = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-            command = f'"{shell}" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{root / "start-windows.ps1"}" -NoConsole'
+            if frozen:
+                command = f'"{executable}"'
+            else:
+                command = f'"{shell}" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{root / "start-windows.ps1"}" -NoConsole'
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WIN_KEY) as key:
             if enable:
                 winreg.SetValueEx(key, WIN_NAME, 0, winreg.REG_SZ, command)
@@ -69,14 +74,14 @@ def set_enabled(enable: bool, root: Path = ROOT, system: str | None = None,
         source = str(root / "desktop" / "run_app.py")
         payload = {
             "Label": MAC_LABEL,
-            "ProgramArguments": [launcher, source],
-            "WorkingDirectory": str(root),
+            "ProgramArguments": [str(executable)] if frozen else [launcher, source],
+            "WorkingDirectory": str(executable.parent) if frozen else str(root),
             "RunAtLoad": True,
             "KeepAlive": False,
         }
         path.write_bytes(plistlib.dumps(payload))
     else:
-        launch = str(root / "start-linux.sh")
+        launch = str(executable) if frozen else str(root / "start-linux.sh")
         # Escape characters per the desktop-file quoting convention.
         escaped = launch.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
         contents = "[Desktop Entry]\nType=Application\nName=Provider Usage Tray\n" + f'Exec="{escaped}"\n' + "Terminal=false\nX-GNOME-Autostart-enabled=true\n"
