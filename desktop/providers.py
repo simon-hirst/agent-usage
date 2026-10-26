@@ -152,3 +152,46 @@ def icon_number(result: dict[str, Any] | None, field: str = "five_hour") -> str:
         return str(int(round(value["remaining_percent"])))
     # Balances do not have a meaningful percentage without a known quota.
     return "--"
+
+
+def normalize_direct_result(service: str, data: Any) -> dict[str, Any]:
+    """Validate direct subprocess output before rendering it in the UI."""
+    if service not in ('gemini', 'copilot') or not isinstance(data, dict):
+        raise ValueError('Invalid direct usage response')
+    if data.get('ok') is False:
+        raise ValueError(str(data.get('error') or 'Account unavailable')[:220])
+    if data.get('ok') is not True:
+        raise ValueError('Direct reader returned no account data')
+    result = base_result()
+    for field in ('monthly',):
+        item = data.get(field)
+        if isinstance(item, dict):
+            result[field] = window(item.get('remaining_percent'), item.get('resets_at'))
+    raw = data.get('model_quotas')
+    if isinstance(raw, list):
+        quotas = []
+        for entry in raw[:100]:
+            if not isinstance(entry, dict) or not isinstance(entry.get('name'), str):
+                continue
+            pct = window(entry.get('remaining_percent'), entry.get('resets_at'))
+            if pct:
+                quotas.append({'name': entry['name'][:72], **pct})
+        result['model_quotas'] = quotas
+    if not result.get('model_quotas') and not result.get('monthly'):
+        raise ValueError('No supported quota metrics found')
+    return result
+
+
+def parse_direct_output(output: bytes) -> dict[str, Any]:
+    """Accept JSON from the WSL reader even if an interactive shell prints a greeting."""
+    if len(output) > 262144:
+        raise ValueError('Direct reader output too large')
+    for line in reversed(output.decode('utf-8', 'replace').splitlines()[-16:]):
+        if line.lstrip().startswith('{'):
+            try:
+                data = __import__('json').loads(line)
+                if isinstance(data, dict) and isinstance(data.get('ok'), bool):
+                    return data
+            except ValueError:
+                pass
+    raise ValueError('Direct reader returned no valid usage response')

@@ -52,6 +52,15 @@ def individual_tooltip(provider: str, snapshot: Mapping[str, Any] | None,
     name = PROVIDERS[provider]["short"]
     if not snapshot or snapshot.get("ok") is not True:
         return f"{name} (local time)\nUsage unavailable; reset times unknown"
+    model_quotas = snapshot.get('model_quotas')
+    if provider in ('gemini', 'copilot') and isinstance(model_quotas, list) and model_quotas:
+        lines = [f"{name} quota (local time)"]
+        for quota in model_quotas[:2]:
+            reset = local_reset_time(quota.get('resets_at'), compact=True, timezone=timezone) or '?'
+            lines.append(f"{quota['name'][:16]}: {_remaining(quota)}; {reset}")
+        if len("\n".join(lines)) > MAX_TRAY_TOOLTIP:
+            lines = lines[:2]  # never truncate a reset timestamp mid-string
+        return "\n".join(lines)
     windows = (_window(snapshot, "five_hour"), _window(snapshot, "weekly"))
     if all(v is None for v in windows):
         balance = snapshot.get("balance_text")
@@ -82,7 +91,14 @@ def _merged_line(provider: str, snapshot: Mapping[str, Any] | None,
     name = PROVIDERS[provider]["short"]
     if not snapshot or snapshot.get("ok") is not True:
         return f"{name}: unavailable"
+    if PROVIDERS[provider]['source'] == 'dashboard':
+        return f"{name}: open account usage"
     pieces = []
+    if provider in ('gemini', 'copilot'):
+        quotas = snapshot.get('model_quotas')
+        if isinstance(quotas, list) and quotas:
+            q = min(quotas, key=lambda q: q.get('remaining_percent', 101))
+            return f"{name}: {q['remaining_percent']:g}% ({local_reset_time(q.get('resets_at'), compact=True, timezone=timezone) or '?'})"
     for field, label in (("five_hour", "5h"), ("weekly", "7d")):
         item = _window(snapshot, field)
         if item is not None:

@@ -42,7 +42,10 @@ For Codex/Claude on Windows, install and sign into both CLIs in **Debian WSL** (
 | **Kimi Code** | 5-hour, legacy weekly, monthly limits where present | Running Kimi local web API; `KIMI_SERVER_TOKEN` environment variable |
 | **DeepSeek API** | Current API balance | `DEEPSEEK_API_KEY` environment variable |
 | **OpenRouter API** | Available API credits and percentage of purchased credits | `OPENROUTER_API_KEY` **management** key |
-| **Grok, Gemini, Copilot, Cursor, Windsurf, Qwen, Perplexity** | Usage windows from a local bridge | Provide a localhost JSON endpoint under **Settings → Advanced** |
+| **Gemini Code Assist** | Model-specific remaining quota and reset dates | Signed-in Gemini CLI using OAuth on the same OS/WSL environment; Google CLI OAuth availability depends on account type |
+| **GitHub Copilot** | Monthly quota percentage and reset date when reported | Signed-in `gh` CLI (`gh auth login`) on same OS/WSL; uses an undocumented GitHub endpoint |
+| **Grok / Cursor** | Open shared account usage dashboard (no automatic reading) | Sign in to Grok dashboard; shared X-subscription pool, or Cursor's separate legacy plan |
+| **Windsurf / Qwen / Perplexity** | One-click account usage page; no automatic reading | Sign into the provider in your browser |
 
 **Important:** A *subscription quota*, a *rate limit* and *prepaid API credits* are different measurements. The app labels them separately and doesn't invent percentages. DeepSeek balance is shown in the popup/dashboard, not as a fake percentage. Kimi's newer plans may not have a weekly quota. Muse's CLI output is parsed conservatively and may need an updated adapter if Meta changes the format.
 
@@ -52,40 +55,31 @@ For providers that require an API key, set the relevant environment variable **b
 
 Kimi's local web server provides `GET /api/v1/oauth/usage` with a bearer token. By default the app tries `http://127.0.0.1:58627/api/v1/oauth/usage`. Start the Kimi web server, obtain its access token, and set `KIMI_SERVER_TOKEN` in the desktop app's environment. If its port differs, change the endpoint under Advanced. The app does not start Kimi or read its secrets automatically.
 
-### Custom provider bridge
+### No extra bridge setup
 
-For providers without a supported machine-readable subscription endpoint, run your own localhost service and enter its URL under Settings → Advanced. It should return:
+The tray includes its own Gemini and Copilot account readers. It executes the readers as short-lived subprocesses and **never runs a third-party bridge service**. On Windows, sign in to the relevant CLI **inside the configured WSL distribution**; on macOS/Linux, sign in natively. Gemini quota reads require a current CLI OAuth access token; if it has expired, open the CLI to renew it. These endpoints may change and are not guaranteed for every account.
 
-```json
-{
-  "ok": true,
-  "stale": false,
-  "five_hour": {"remaining_percent": 65, "resets_at": "2026-10-27T12:00:00Z"},
-  "weekly": {"remaining_percent": 40, "resets_at": "2026-11-02T12:00:00Z"}
-}
-```
-
-Fields can be `null` or omitted if unavailable. The app only accepts **HTTP localhost URLs** for bridges, never arbitrary remote endpoints; don't expose private usage servers publicly. The bridge is optional and **is not bundled** for those services.
+Grok/Cursor, Windsurf, Qwen and Perplexity do not currently have a verified, stable reader for the equivalent **personal subscription percentage** in this application. Selecting them adds a one-click **Open account usage page** shortcut; the tray displays `--` until a real supported reader exists. Grok and current Cursor plans can share one weekly pool, so showing separate invented balances would be misleading. API balances, if separately available, are not interchangeable with subscription use.
 
 ## Usage and controls
 
-- **Individual icons:** coloured percentages remaining (or `--` if unavailable). Hover over any icon to see **both 5-hour and weekly reset dates/times in your computer's local timezone**, where reported. Optionally show weekly icons too.
+- **Individual icons:** coloured percentages remaining (or `--` if unavailable). Hover over an icon to see its reported quota windows and reset dates in your computer's local timezone. Gemini shows per-model quotas; Copilot shows monthly quotas. Optionally show weekly icons too.
 - **Merged mode:** one coloured icon. Hover for a compact summary of local reset times. Operating systems limit tray tooltip length, so if you're tracking many providers, click for the full quick view (with reset dates for all providers).
 - **Dashboard:** opened only with **Open dashboard**, not by clicking the tray icon.
-- **Settings:** choose providers, enable merged mode, update local bridge URLs, and configure login startup.
+- **Settings:** choose providers, enable merged mode, configure optional Muse/Kimi endpoints, and configure login startup.
 - Both original `/get` APIs remain available at `http://127.0.0.1:3789/get` and `http://127.0.0.1:3790/get` while running.
 
 If a value is `--`, hover for details or open the quick view. The Claude usage endpoint is undocumented and can be rate-limited. On GNOME/Wayland, install an AppIndicator extension if your system doesn't show tray icons.
 
 ## Automated GitHub Releases
 
-On every pushed version tag (for example `v3.1.1`), `.github/workflows/release.yml` builds six native packages, smoke-tests the bundled UI and backend entrypoints, checks that all six artifacts exist, and publishes them together with SHA-256 checksums to GitHub Releases. You can also run that workflow manually for an existing tag. Release builds require no local compilation; the binaries are currently unsigned and not notarised.
+On every pushed version tag (for example `v3.2.0`), `.github/workflows/release.yml` builds six native packages, smoke-tests the bundled UI and backend entrypoints, checks that all six artifacts exist, and publishes them together with SHA-256 checksums to GitHub Releases. You can also run that workflow manually for an existing tag. Release builds require no local compilation; the binaries are currently unsigned and not notarised.
 
 To publish from a clean committed repository:
 
 ```bash
-git tag v3.1.1
-git push origin v3.1.1
+git tag v3.2.0
+git push origin v3.2.0
 ```
 
 ## Tests

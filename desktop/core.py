@@ -19,15 +19,24 @@ PROVIDERS = {
     "claude": {"name": "Claude / Claude Code", "short": "Claude", "colour": "#DB7958", "source": "local", "hint": "Requires signed-in Claude Code"},
     "muse": {"name": "Muse Code", "short": "Muse", "colour": "#547AE8", "source": "muse", "hint": "Requires signed-in Muse Code CLI (`muse usage`)"},
     "kimi": {"name": "Kimi Code", "short": "Kimi", "colour": "#8566D8", "source": "kimi", "hint": "Requires local Kimi server and KIMI_SERVER_TOKEN"},
-    "grok": {"name": "Grok", "short": "Grok", "colour": "#C4AD3C", "source": "bridge", "hint": "Subscription quotas require a local usage bridge"},
+    "grok": {"name": "Grok", "short": "Grok", "colour": "#C4AD3C", "source": "dashboard", "hint": "Shared Grok/Cursor subscription pool. Open Grok Usage to see live balance"},
     "deepseek": {"name": "DeepSeek API", "short": "DeepSeek", "colour": "#2883DD", "source": "deepseek", "hint": "Requires DEEPSEEK_API_KEY; displays API balance, not a subscription quota"},
     "openrouter": {"name": "OpenRouter API", "short": "OpenRouter", "colour": "#9867CE", "source": "openrouter", "hint": "Requires OPENROUTER_API_KEY management key; displays API credits"},
-    "gemini": {"name": "Gemini", "short": "Gemini", "colour": "#468AE7", "source": "bridge", "hint": "Requires a local usage bridge"},
-    "copilot": {"name": "GitHub Copilot", "short": "Copilot", "colour": "#72798A", "source": "bridge", "hint": "Requires a local usage bridge"},
-    "cursor": {"name": "Cursor", "short": "Cursor", "colour": "#2BA99E", "source": "bridge", "hint": "Requires a local usage bridge"},
-    "windsurf": {"name": "Windsurf", "short": "Windsurf", "colour": "#47A7A9", "source": "bridge", "hint": "Requires a local usage bridge"},
-    "qwen": {"name": "Qwen", "short": "Qwen", "colour": "#AA70C4", "source": "bridge", "hint": "Requires a local usage bridge"},
-    "perplexity": {"name": "Perplexity", "short": "Perplexity", "colour": "#4DAEA7", "source": "bridge", "hint": "Requires a local usage bridge"},
+    "gemini": {"name": "Gemini Code Assist", "short": "Gemini", "colour": "#468AE7", "source": "direct", "hint": "Reads model quotas from signed-in Gemini CLI OAuth; not the Gemini web subscription"},
+    "copilot": {"name": "GitHub Copilot", "short": "Copilot", "colour": "#72798A", "source": "direct", "hint": "Uses signed-in GitHub CLI (`gh auth login`) and Copilot quota endpoint (unofficial)"},
+    "cursor": {"name": "Cursor", "short": "Cursor", "colour": "#2BA99E", "source": "dashboard", "hint": "Open the provider usage page; a stable subscription quota API is not available"},
+    "windsurf": {"name": "Windsurf", "short": "Windsurf", "colour": "#47A7A9", "source": "dashboard", "hint": "Open the provider usage page; a stable subscription quota API is not available"},
+    "qwen": {"name": "Qwen", "short": "Qwen", "colour": "#AA70C4", "source": "dashboard", "hint": "Open the provider usage page; a stable subscription quota API is not available"},
+    "perplexity": {"name": "Perplexity", "short": "Perplexity", "colour": "#4DAEA7", "source": "dashboard", "hint": "Open the provider usage page; a stable subscription quota API is not available"},
+}
+USAGE_PAGES = {
+    "grok": "https://grok.com/dashboard",
+    "cursor": "https://grok.com/dashboard",
+    "windsurf": "https://windsurf.com/settings",
+    "qwen": "https://bailian.console.alibabacloud.com/",
+    "perplexity": "https://www.perplexity.ai/settings",
+    "gemini": "https://aistudio.google.com/usage",
+    "copilot": "https://github.com/settings/billing",
 }
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 APP_ID = "codex-claude-usage"

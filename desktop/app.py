@@ -6,10 +6,13 @@ import json
 import os
 import platform
 import sys
+import time
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QLockFile, QProcess, QProcessEnvironment, QTimer, QUrl
-from PySide6.QtGui import QAction, QColor, QCursor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame,
@@ -18,9 +21,9 @@ from PySide6.QtWidgets import (
 )
 
 from .autostart import enabled as autostart_enabled, set_enabled as set_autostart
-from .core import ROOT, PROVIDERS, SERVICES, app_data_dir, load_settings, save_settings, secure_child_env
+from .core import ROOT, PROVIDERS, SERVICES, USAGE_PAGES, app_data_dir, load_settings, save_settings, secure_child_env
 from .processes import BackendManager
-from .providers import icon_number, is_local_url, normalize, parse_muse_usage
+from .providers import icon_number, is_local_url, normalize, parse_muse_usage, normalize_direct_result, parse_direct_output
 from .tooltips import individual_tooltip, merged_tooltip, local_reset_time
 
 
@@ -82,6 +85,15 @@ def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True,
                 local = local_reset_time(item.get("resets_at"))
                 fragment += f" (resets {local})" if local else " (reset unknown)"
             fragments.append(fragment)
+    if snapshot.get("model_quotas"):
+        for quota in snapshot["model_quotas"][:6]:
+            part = f"{quota['name']}: {quota['remaining_percent']:g}% left"
+            if include_resets:
+                local = local_reset_time(quota.get('resets_at'))
+                part += f" (resets {local})" if local else " (reset unknown)"
+            fragments.append(part)
+        if len(snapshot['model_quotas']) > 6:
+            fragments.append(f"+{len(snapshot['model_quotas']) - 6} more model quotas")
     if snapshot.get("balance_text"):
         fragments.append(str(snapshot["balance_text"]))
     if snapshot.get("credit_percent") is not None:
@@ -135,8 +147,8 @@ class ProviderSelection(QDialog):
         self.distro = QLineEdit(settings["wsl_distro"])
         form.addRow("WSL distro (Windows):", self.distro)
         outer.addLayout(form)
-        advanced_button = QPushButton("Advanced: configure local usage bridges ▸")
-        advanced_button.setToolTip("For providers without a native quota reader, supply an HTTP localhost /get endpoint")
+        advanced_button = QPushButton("Advanced: optional Muse/Kimi local endpoint ▸")
+        advanced_button.setToolTip("For Muse/Kimi installations with a nondefault endpoint")
         outer.addWidget(advanced_button)
         self.advanced_widget = QWidget()
         advanced_form = QFormLayout(self.advanced_widget)
@@ -144,7 +156,7 @@ class ProviderSelection(QDialog):
         self.advanced_widget.hide()
         advanced_button.clicked.connect(lambda: self.advanced_widget.setVisible(not self.advanced_widget.isVisible()))
         self.endpoint_edits: dict[str, QLineEdit] = {}
-        for key in ("muse", "kimi", "grok", "gemini", "copilot", "cursor", "windsurf", "qwen", "perplexity"):
+        for key in ("muse", "kimi"):
             entry = QLineEdit(settings["endpoints"].get(key, ""))
             entry.setPlaceholderText("http://127.0.0.1:PORT/get" if key != "kimi" else "http://127.0.0.1:58627/api/v1/oauth/usage")
             entry.setToolTip("Only http://localhost / 127.0.0.1 endpoints are accepted")
@@ -234,6 +246,10 @@ class QuickView(QWidget):
             entry.setWordWrap(True)
             entry.setStyleSheet("padding: 4px 3px")
             self.content.addWidget(entry)
+            if service in USAGE_PAGES:
+                open_page = QPushButton(f"Open {PROVIDERS[service]['short']} usage page")
+                open_page.clicked.connect(lambda checked=False, s=service: self.controller.open_usage_page(s))
+                self.content.addWidget(open_page)
         self.adjustSize()
 
     def show_at_cursor(self):
@@ -314,6 +330,13 @@ class Dashboard(QDialog):
                     progress.setValue(int(round(value["remaining_percent"])))
                     progress.setStyleSheet(f"QProgressBar::chunk {{ background: {PROVIDERS[service]['colour']}; }}")
                     box.addWidget(progress)
+                if snap.get('model_quotas'):
+                    for quota in snap['model_quotas'][:15]:
+                        text = f"{quota['name']}: {quota['remaining_percent']:g}% left — {local_reset(quota.get('resets_at'))}"
+                        entry = QLabel(text)
+                        entry.setWordWrap(True)
+                        box.addWidget(entry)
+                    found = True
                 if snap.get("balance_text"):
                     box.addWidget(QLabel("Balance: " + snap["balance_text"]))
                     found = True
@@ -322,6 +345,10 @@ class Dashboard(QDialog):
                     found = True
                 if not found:
                     box.addWidget(QLabel("No quota windows available for this account"))
+            if service in USAGE_PAGES:
+                open_page = QPushButton("Open account usage page")
+                open_page.clicked.connect(lambda checked=False, s=service: self.controller.open_usage_page(s))
+                box.addWidget(open_page)
             self.content.addWidget(group)
         self.content.addStretch()
 
@@ -341,6 +368,9 @@ class TrayController:
         self.menus: list[QMenu] = []
         self.muse_proc: QProcess | None = None
         self.muse_started = False
+        self.direct_procs: dict[str, QProcess] = {}
+        self.direct_last_started: dict[str, float] = {}
+        self.direct_result_paths: dict[str, Path] = {}
         self.dashboard = Dashboard(self)
         self.quick = QuickView(self)
         self.merged_tray = QSystemTrayIcon(combined_icon(), app)
@@ -365,7 +395,12 @@ class TrayController:
         menu = QMenu()
         if which is not None:
             service, field = which
-            heading = menu.addAction(f"{PROVIDERS[service]['name']} — {field.replace('_', ' ')}")
+            description = ('Model quotas' if service == 'gemini' else
+                           'Monthly quota' if service == 'copilot' else
+                           'API balance' if service in ('deepseek', 'openrouter') else
+                           'Account usage page' if PROVIDERS[service]['source'] == 'dashboard' else
+                           '5-hour quota' if field == 'five_hour' else 'Weekly quota')
+            heading = menu.addAction(f"{PROVIDERS[service]['name']} — {description}")
             heading.setEnabled(False)
             menu.addSeparator()
         popup = menu.addAction("Quick view")
@@ -379,7 +414,16 @@ class TrayController:
         quit_action.triggered.connect(self.exit_app)
         tray.setContextMenu(menu)
         tray.activated.connect(self.on_activated)
+        if which is not None and which[0] in USAGE_PAGES:
+            menu.addSeparator()
+            usage_action = menu.addAction("Open account usage page")
+            usage_action.triggered.connect(lambda checked=False, s=which[0]: self.open_usage_page(s))
         self.menus.append(menu)
+
+    def open_usage_page(self, service: str):
+        url = USAGE_PAGES.get(service)
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
 
     def rebuild_icons(self):
         for tray in self.trays.values():
@@ -392,12 +436,12 @@ class TrayController:
             self.merged_tray.setVisible(self.tray_available)
             return
         for service in selected_services(self.settings):
-            fields = ("five_hour", "weekly") if self.settings["show_weekly"] and service not in ("deepseek", "openrouter") else ("five_hour",)
+            fields = ("five_hour", "weekly") if self.settings["show_weekly"] and service in ("codex", "claude", "muse", "kimi") else ("five_hour",)
             for field in fields:
                 tray = QSystemTrayIcon(self.app)
                 snap = self.snapshots.get(service)
                 value = snap.get(field) if snap and snap.get("ok") else None
-                remaining = value.get("remaining_percent") if isinstance(value, dict) else None
+                remaining = self.icon_remaining(service, snap, field)
                 if remaining is None and field == "five_hour" and service == "openrouter" and snap and snap.get("ok"):
                     remaining = snap.get("credit_percent")
                 tray.setIcon(icon_for(service, field, remaining))
@@ -405,6 +449,21 @@ class TrayController:
                 self._configure_tray(tray, (service, field))
                 tray.show() if self.tray_available else None
                 self.trays[(service, field)] = tray
+
+    def icon_remaining(self, service: str, snap: dict | None, field: str):
+        if not snap or not snap.get('ok'):
+            return None
+        data = snap.get(field)
+        if isinstance(data, dict):
+            return data.get('remaining_percent')
+        if field == 'five_hour':
+            # Gemini is per-model; show the lowest remaining model bucket.
+            if service == 'gemini' and snap.get('model_quotas'):
+                return min(q['remaining_percent'] for q in snap['model_quotas'])
+            # Copilot quota is monthly, not a five-hour window.
+            if service == 'copilot' and isinstance(snap.get('monthly'), dict):
+                return snap['monthly']['remaining_percent']
+        return None
 
     def on_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
@@ -430,6 +489,11 @@ class TrayController:
             self.manager.stop()
             self.manager = BackendManager(wsl_distro=self.settings["wsl_distro"])
         self.manager.set_selected(self.settings["selected_providers"])
+        for service, proc in list(self.direct_procs.items()):
+            if service not in self.settings['selected_providers']:
+                proc.kill()
+                self.direct_procs.pop(service, None)
+                self.discard_direct_file(service)
         if "muse" not in self.settings["selected_providers"] and self.muse_proc is not None:
             self.muse_proc.kill()
             self.muse_proc = None
@@ -454,6 +518,12 @@ class TrayController:
             if source == "local":
                 url = f"http://127.0.0.1:{SERVICES[service]['port']}/get"
                 token = None
+            elif source == "direct":
+                self.poll_direct(service)
+                continue
+            elif source == "dashboard":
+                self.consume_error(service, "No automatic quota endpoint. Open the account usage page.")
+                continue
             elif endpoint:
                 if not is_local_url(endpoint):
                     self.consume_error(service, "Configured URL must point to localhost")
@@ -469,7 +539,7 @@ class TrayController:
                 self.poll_muse()
                 continue
             else:
-                self.consume_error(service, "Set a localhost usage bridge URL in Settings")
+                self.consume_error(service, "No supported reader for this provider")
                 continue
             if service in ("deepseek", "openrouter") and not token:
                 self.consume_error(service, "Missing API key environment variable (see README)")
@@ -484,6 +554,87 @@ class TrayController:
                 request.setRawHeader(b"Authorization", b"Bearer " + token.encode("utf-8"))
             reply = self.net.get(request)
             reply.finished.connect(lambda r=reply, s=service: self.consume(s, r))
+
+    def poll_direct(self, service: str):
+        if service in self.direct_procs:
+            return
+        # Internal quota endpoints should not be called every 60s unnecessarily.
+        if time.monotonic() - self.direct_last_started.get(service, -1e10) < 300:
+            return
+        self.direct_last_started[service] = time.monotonic()
+        proc = QProcess(self.app)
+        self.direct_procs[service] = proc
+        proc.setWorkingDirectory(str(ROOT))
+        env = QProcessEnvironment()
+        for key, value in secure_child_env().items():
+            env.insert(key, value)
+        proc.setProcessEnvironment(env)
+        if platform.system() == 'Windows':
+            # WSL child stdout works normally and avoids Windows/WSL file paths.
+            proc.setProgram('wsl.exe')
+            proc.setArguments(['-d', self.settings['wsl_distro'], '--', 'bash', '-i', './desktop/direct-usage.sh', service])
+        else:
+            directory = app_data_dir()
+            directory.mkdir(parents=True, exist_ok=True)
+            fd, filename = tempfile.mkstemp(prefix=f'direct-{service}-', suffix='.json', dir=directory)
+            os.close(fd)
+            self.direct_result_paths[service] = Path(filename)
+            if getattr(sys, 'frozen', False):
+                proc.setProgram(sys.executable)
+                proc.setArguments(['--direct-usage', service, '--output', filename])
+            else:
+                proc.setProgram(sys.executable)
+                proc.setArguments(['-m', 'desktop.direct_usage', service, '--output', filename])
+        proc.finished.connect(lambda code, status, s=service, p=proc: self.consume_direct(s, p, code))
+        proc.errorOccurred.connect(lambda error, s=service, p=proc: self.direct_error(s, p))
+        proc.start()
+        QTimer.singleShot(25000, lambda s=service, p=proc: self.timeout_direct(s, p))
+
+    def discard_direct_file(self, service: str):
+        path = self.direct_result_paths.pop(service, None)
+        if path:
+            path.unlink(missing_ok=True)
+
+    def timeout_direct(self, service: str, proc: QProcess):
+        if self.direct_procs.get(service) is proc and proc.state() != QProcess.ProcessState.NotRunning:
+            self.direct_procs.pop(service, None)
+            self.discard_direct_file(service)
+            self.consume_error(service, 'Direct provider usage request timed out')
+            proc.kill()
+            proc.deleteLater()
+
+    def direct_error(self, service: str, proc: QProcess):
+        if self.direct_procs.get(service) is not proc:
+            return
+        if proc.error() == QProcess.ProcessError.FailedToStart:
+            self.direct_procs.pop(service, None)
+            self.discard_direct_file(service)
+            self.consume_error(service, 'Cannot start provider reader; check CLI login and WSL settings')
+            proc.deleteLater()
+
+    def consume_direct(self, service: str, proc: QProcess, code: int):
+        if self.direct_procs.get(service) is not proc:
+            return
+        self.direct_procs.pop(service, None)
+        path = self.direct_result_paths.get(service)
+        if path:
+            try:
+                output = path.read_bytes()
+            except OSError:
+                output = b''
+            self.discard_direct_file(service)
+        else:
+            output = bytes(proc.readAllStandardOutput())
+        proc.deleteLater()
+        if service not in self.settings['selected_providers']:
+            return
+        try:
+            if code or len(output) > 262144:
+                raise ValueError('Direct provider reader failed')
+            result = normalize_direct_result(service, parse_direct_output(output))
+            self.set_snapshot(service, result)
+        except (ValueError, UnicodeError) as err:
+            self.consume_error(service, str(err))
 
     def poll_muse(self):
         if self.muse_proc is not None and self.muse_proc.state() != QProcess.ProcessState.NotRunning:
@@ -558,7 +709,7 @@ class TrayController:
             if tray is None:
                 continue
             item = result.get(field) if result.get("ok") else None
-            remaining = item.get("remaining_percent") if isinstance(item, dict) else None
+            remaining = self.icon_remaining(service, result, field)
             if remaining is None and field == "five_hour" and service == "openrouter" and result.get("ok"):
                 remaining = result.get("credit_percent")
             tray.setIcon(icon_for(service, field, remaining))
@@ -580,6 +731,12 @@ class TrayController:
         for tray in self.trays.values():
             tray.hide()
         self.merged_tray.hide()
+        for proc in self.direct_procs.values():
+            proc.kill()
+            proc.waitForFinished(500)
+        self.direct_procs.clear()
+        for service in list(self.direct_result_paths):
+            self.discard_direct_file(service)
         if self.muse_proc is not None:
             self.muse_proc.kill()
             self.muse_proc.waitForFinished(1000)

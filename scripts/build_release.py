@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 NAME = 'ProviderUsageTray'
 SOURCES = [
     ('desktop/managed-wsl.sh', 'desktop'),
+    ('desktop/direct_usage.py', 'desktop'),
+    ('desktop/direct-usage.sh', 'desktop'),
     ('work-codex-usage-api/server.py', 'work-codex-usage-api'),
     ('claude-usage-api/server.py', 'claude-usage-api'),
 ]
@@ -63,6 +65,13 @@ def build(version: str, target: str, artifact_dir: Path) -> Path:
     # Binary smoke: both server entrypoints + Qt UI, with NO authenticated CLIs needed.
     env = dict(os.environ, QT_QPA_PLATFORM='offscreen')
     subprocess.run([str(exe), '--verify-bundle'], cwd=ROOT, env=env, check=True, timeout=75)
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / 'direct-smoke.json'
+        subprocess.run([str(exe), '--direct-usage', 'verify-no-login', '--output', str(output)],
+                       cwd=ROOT, env=env, stdout=subprocess.DEVNULL, timeout=20, check=True)
+        if not output.is_file() or '"ok":false' not in output.read_text(encoding='utf-8'):
+            raise RuntimeError('Bundled direct-reader result file is broken')
     for service in ('codex', 'claude'):
         subprocess.run([str(exe), '--backend-server', service, '--help'],
                        cwd=ROOT, env=env, check=True, timeout=75,

@@ -63,7 +63,7 @@ def verify_bundle() -> int:
 def main() -> int:
     # Windowed PyInstaller executables may have no Python standard streams.
     # The embedded API scripts and their argparse parsers need writable streams.
-    if len(sys.argv) >= 2 and sys.argv[1] in ('--backend-supervisor', '--backend-server', '--verify-bundle'):
+    if len(sys.argv) >= 2 and sys.argv[1] in ('--backend-supervisor', '--backend-server', '--verify-bundle', '--direct-usage'):
         if sys.stdout is None:
             sys.stdout = open(os.devnull, 'w', encoding='utf-8')
         if sys.stderr is None:
@@ -74,6 +74,11 @@ def main() -> int:
             return run(sys.argv[2] if len(sys.argv) == 3 else "")
         if sys.argv[1] == "--backend-server":
             return run_backend_server(sys.argv[2] if len(sys.argv) >= 3 else "")
+        if sys.argv[1] == "--direct-usage":
+            from desktop.direct_usage import run
+            if len(sys.argv) == 5 and sys.argv[3] == '--output':
+                return run(sys.argv[2], sys.argv[4])
+            return 2  # Bundled reader must use an output file (no GUI stdout).
         if sys.argv[1] == "--verify-bundle":
             return verify_bundle()
     from desktop.app import main as gui_main

@@ -1,3 +1,14 @@
+# Changelog
+
+## v3.2.0 — Direct provider readers
+
+- Add built-in Gemini Code Assist quota reader from an existing CLI OAuth session.
+- Add built-in GitHub Copilot monthly quota reader from existing GitHub CLI authentication.
+- Remove bridge-setup fields for Grok, Gemini, Copilot, Cursor, Windsurf, Qwen and Perplexity.
+- Add one-click account usage links for providers without verified subscription quota endpoints.
+- Report model-specific and monthly windows honestly; do not invent five-hour/week percentages.
+- Keep all original Codex/Claude/Kimi/Muse and API-balance integrations intact.
+
 ## v3.1.2 — Local reset times on tray hover
 
 - Show local 5-hour and weekly reset dates/times when hovering over individual tray icons.
@@ -16,8 +27,6 @@
 - Added frozen application backend dispatch and startup registration for the standalone binaries.
 - Bundled the Codex and Claude Python services and WSL supervisor with the app.
 - Added compiled-app smoke checks and a SHA-256 checksum manifest.
-
-# Changelog
 
 ## v3.0.0 — Selectable providers and compact tray popup (2026-10-26)
 
