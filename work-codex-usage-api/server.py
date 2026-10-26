@@ -344,7 +344,10 @@ class UsageCache:
             }, 503
 
         age = int(max(0, now - updated))
-        stale = age >= self.interval * 2 or (failed is not None and failed > updated)
+        # A failed refresh invalidates the cached reading even when the failure
+        # and preceding success get identical wall-clock timestamps (possible on
+        # Windows due to clock resolution). A successful refresh clears failed_at.
+        stale = age >= self.interval * 2 or failed is not None
         return {
             "ok": not stale,
             "source": "codex-app-server",

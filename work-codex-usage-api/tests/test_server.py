@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 from urllib.request import urlopen
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -71,6 +72,26 @@ class TestEndToEnd(unittest.TestCase):
                 t.join(3)
         finally:
             client.close()
+
+    def test_failed_refresh_with_same_clock_tick_marks_cache_stale(self):
+        """Windows may report identical times for consecutive refreshes."""
+        sample = normalize_rate_limits({'rateLimits': {
+            'limitId': 'codex',
+            'primary': {'usedPercent': 20, 'windowDurationMins': 300},
+            'secondary': {'usedPercent': 30, 'windowDurationMins': 10080},
+        }})
+        client = mock.Mock()
+        client.get_limits.side_effect = [sample, RuntimeError('offline')]
+        cache = UsageCache(client, interval=60)
+        with mock.patch('server.time.time', return_value=1800000000.0):
+            cache.refresh()
+            cache.refresh()
+            value, status = cache.get()
+        self.assertEqual(status, 200)
+        self.assertTrue(value['stale'])
+        self.assertFalse(value['ok'])
+        self.assertIsNotNone(value['weekly'])
+        self.assertIn('offline', value['error'])
 
     def test_stale_after_failed_refresh(self):
         fake = ROOT / 'tests' / 'fake_codex.py'
