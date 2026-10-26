@@ -1,3 +1,8 @@
+## v3.1.1 — Windows ARM64 release CI fix
+
+- Corrected Claude usage-cache freshness after a failed poll when timestamps are equal.
+- Added a deterministic regression test for coarse-resolution clocks.
+
 ## v3.1.0 — Native downloadable releases
 
 - Added automated six-platform GitHub Releases for Windows, macOS and Linux on x64 and ARM64.

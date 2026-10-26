@@ -151,6 +151,32 @@ class EndToEndTests(unittest.TestCase):
         cache.refresh()
         self.assertEqual(n, len(FakeUpstream.seen_auth))
 
+    def test_failed_refresh_is_stale_when_timestamps_are_equal(self):
+        # Windows ARM runners can timestamp two refreshes identically. The
+        # failed refresh must still invalidate the previously cached reading.
+        cache = UsageCache(self.client, 60)
+        self.assertTrue(cache.refresh())
+        FakeUpstream.rate_limited = True
+        cache.next_poll = 0
+        self.assertFalse(cache.refresh())
+        with cache.lock:
+            cache.failed_at = cache.updated_at
+        result, status = cache.get()
+        self.assertEqual(status, 200)
+        self.assertTrue(result['stale'])
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['five_hour']['used_percent'], 66.6)
+        self.assertIn('429', result['error'])
+
+        # A subsequent successful poll restores freshness.
+        FakeUpstream.rate_limited = False
+        cache.next_poll = 0
+        self.assertTrue(cache.refresh())
+        result, status = cache.get()
+        self.assertEqual(status, 200)
+        self.assertTrue(result['ok'])
+        self.assertFalse(result['stale'])
+
     def test_initial_429_returns_503(self):
         FakeUpstream.rate_limited = True
         cache = UsageCache(self.client)

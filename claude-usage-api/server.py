@@ -367,7 +367,10 @@ class UsageCache:
                 "scoped_limits": [], "extra_usage": None,
             }, 503
         age = max(0, int(now - updated))
-        stale = age >= 2 * self.interval or (failure is not None and failure > updated)
+        # A refresh failure invalidates the last successful reading, even if the
+        # system clock has coarse resolution or moves backwards between calls.
+        # failed_at is cleared on the next successful refresh.
+        stale = age >= 2 * self.interval or failure is not None
         return {
             "ok": not stale,
             "stale": stale,
