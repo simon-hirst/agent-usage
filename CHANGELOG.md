@@ -1,3 +1,10 @@
+## v3.1.2 — Local reset times on tray hover
+
+- Show local 5-hour and weekly reset dates/times when hovering over individual tray icons.
+- Add a compact per-provider reset summary to the merged icon hover tooltip.
+- Show local reset times in the quick view for every selected provider, including when the OS tooltip is too short.
+- Treat missing or stale reset timestamps as unavailable rather than estimating them.
+
 ## v3.1.1 — Windows ARM64 release CI fix
 
 - Corrected Claude usage-cache freshness after a failed poll when timestamps are equal.

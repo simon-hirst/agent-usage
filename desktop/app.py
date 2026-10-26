@@ -1,7 +1,6 @@
 """Cross-platform provider-selectable system tray with a compact click popup."""
 from __future__ import annotations
 
-import datetime as dt
 import html
 import json
 import os
@@ -22,6 +21,7 @@ from .autostart import enabled as autostart_enabled, set_enabled as set_autostar
 from .core import ROOT, PROVIDERS, SERVICES, app_data_dir, load_settings, save_settings, secure_child_env
 from .processes import BackendManager
 from .providers import icon_number, is_local_url, normalize, parse_muse_usage
+from .tooltips import individual_tooltip, merged_tooltip, local_reset_time
 
 
 def icon_for(service: str, field: str, remaining: float | None) -> QIcon:
@@ -58,20 +58,16 @@ def combined_icon() -> QIcon:
 
 
 def local_reset(iso: Any) -> str:
-    if not isinstance(iso, str) or not iso:
-        return "Reset time unavailable"
-    try:
-        stamp = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return "Resets " + stamp.astimezone().strftime("%a %d %b at %H:%M")
-    except ValueError:
-        return "Reset time unavailable"
+    local = local_reset_time(iso)
+    return "Resets " + local if local else "Reset time unavailable"
 
 
 def selected_services(settings: dict[str, Any]) -> list[str]:
     return [key for key in PROVIDERS if key in settings["selected_providers"]]
 
 
-def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True) -> str:
+def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True,
+                  include_resets: bool = False) -> str:
     if not snapshot or not snapshot.get("ok"):
         reason = str((snapshot or {}).get("error") or "Waiting for usage data")
         return "Unavailable — " + reason[:100]
@@ -81,7 +77,11 @@ def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True) 
             continue
         item = snapshot.get(field)
         if isinstance(item, dict):
-            fragments.append(f"{label}: {item['remaining_percent']:g}% left")
+            fragment = f"{label}: {item['remaining_percent']:g}% left"
+            if include_resets:
+                local = local_reset_time(item.get("resets_at"))
+                fragment += f" (resets {local})" if local else " (reset unknown)"
+            fragments.append(fragment)
     if snapshot.get("balance_text"):
         fragments.append(str(snapshot["balance_text"]))
     if snapshot.get("credit_percent") is not None:
@@ -229,7 +229,7 @@ class QuickView(QWidget):
                 child.widget().deleteLater()
         for service in selected_services(self.controller.settings):
             entry = QLabel(f"<b style='color:{PROVIDERS[service]['colour']}'>{PROVIDERS[service]['short']}</b>"
-                           + "<br>" + html.escape(usage_summary(self.controller.snapshots.get(service))))
+                           + "<br>" + html.escape(usage_summary(self.controller.snapshots.get(service), include_resets=True)))
             entry.setTextFormat(Qt.TextFormat.RichText)
             entry.setWordWrap(True)
             entry.setStyleSheet("padding: 4px 3px")
@@ -344,7 +344,7 @@ class TrayController:
         self.dashboard = Dashboard(self)
         self.quick = QuickView(self)
         self.merged_tray = QSystemTrayIcon(combined_icon(), app)
-        self.merged_tray.setToolTip("Provider usage — click for quick view")
+        self.merged_tray.setToolTip(merged_tooltip(selected_services(self.settings), self.snapshots))
         self._configure_tray(self.merged_tray, None)
         self.rebuild_icons()
         self.refresh_timer = QTimer(app)
@@ -387,6 +387,7 @@ class TrayController:
             tray.deleteLater()
         self.trays.clear()
         self.merged_tray.setVisible(False)
+        self.update_merged_tooltip()
         if self.settings["merged_icon"]:
             self.merged_tray.setVisible(self.tray_available)
             return
@@ -400,7 +401,7 @@ class TrayController:
                 if remaining is None and field == "five_hour" and service == "openrouter" and snap and snap.get("ok"):
                     remaining = snap.get("credit_percent")
                 tray.setIcon(icon_for(service, field, remaining))
-                tray.setToolTip(PROVIDERS[service]["name"] + ": " + usage_summary(snap))
+                tray.setToolTip(individual_tooltip(service, snap))
                 self._configure_tray(tray, (service, field))
                 tray.show() if self.tray_available else None
                 self.trays[(service, field)] = tray
@@ -561,11 +562,17 @@ class TrayController:
             if remaining is None and field == "five_hour" and service == "openrouter" and result.get("ok"):
                 remaining = result.get("credit_percent")
             tray.setIcon(icon_for(service, field, remaining))
-            tray.setToolTip(PROVIDERS[service]["name"] + " — " + usage_summary(result))
+            tray.setToolTip(individual_tooltip(service, result))
+        self.update_merged_tooltip()
         if self.quick.isVisible():
             self.quick.redraw()
         if self.dashboard.isVisible():
             self.dashboard.redraw()
+
+    def update_merged_tooltip(self):
+        self.merged_tray.setToolTip(
+            merged_tooltip(selected_services(self.settings), self.snapshots)
+        )
 
     def exit_app(self):
         self.refresh_timer.stop()

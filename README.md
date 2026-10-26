@@ -69,8 +69,8 @@ Fields can be `null` or omitted if unavailable. The app only accepts **HTTP loca
 
 ## Usage and controls
 
-- **Individual icons:** coloured percentages remaining (or `--` if unavailable). Optionally show weekly icons too.
-- **Merged mode:** one coloured icon. Click it for a compact, auto-closing popup listing all selected providers, limits, resets and balances.
+- **Individual icons:** coloured percentages remaining (or `--` if unavailable). Hover over any icon to see **both 5-hour and weekly reset dates/times in your computer's local timezone**, where reported. Optionally show weekly icons too.
+- **Merged mode:** one coloured icon. Hover for a compact summary of local reset times. Operating systems limit tray tooltip length, so if you're tracking many providers, click for the full quick view (with reset dates for all providers).
 - **Dashboard:** opened only with **Open dashboard**, not by clicking the tray icon.
 - **Settings:** choose providers, enable merged mode, update local bridge URLs, and configure login startup.
 - Both original `/get` APIs remain available at `http://127.0.0.1:3789/get` and `http://127.0.0.1:3790/get` while running.
