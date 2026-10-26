@@ -24,23 +24,25 @@ COLOURS = {"codex": "#168466", "claude": "#BE6849"}
 
 
 def icon_for(service: str, field: str, remaining: float | None) -> QIcon:
-    """High-DPI friendly, readable 2-line percentage glyph in the tray."""
-    pix = QPixmap(72, 72)
+    """Transparent tray icon that shows only the remaining percentage number."""
+    pix = QPixmap(64, 64)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(COLOURS[service]))
-    painter.drawRoundedRect(1, 1, 70, 70, 12, 12)
-    painter.setPen(QColor("#ffffff"))
-    font = QFont("Arial", 14, QFont.Weight.Bold)
-    painter.setFont(font)
-    label = SERVICES[service]["letter"] + ("5h" if field == "five_hour" else "7d")
-    painter.drawText(0, 4, 72, 25, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
-    font.setPointSize(27 if remaining is None or remaining >= 100 else 31)
+    colour = QColor(COLOURS[service])
+    font = QFont("Arial", 34 if remaining is None or remaining >= 100 else 38, QFont.Weight.Bold)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     painter.setFont(font)
     number = "--" if remaining is None else str(int(round(remaining)))
-    painter.drawText(1, 27, 70, 42, Qt.AlignmentFlag.AlignCenter, number)
+    rect = pix.rect()
+
+    # subtle outline so the coloured number stays readable on light or dark trays
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        painter.setPen(QColor(0, 0, 0, 85))
+        painter.drawText(rect.adjusted(dx, dy, dx, dy), Qt.AlignmentFlag.AlignCenter, number)
+
+    painter.setPen(colour)
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, number)
     painter.end()
     return QIcon(pix)
 
@@ -204,7 +206,8 @@ class TrayController:
             for field in ("five_hour", "weekly"):
                 tray = QSystemTrayIcon(self.app)
                 tray.setIcon(icon_for(service, field, None))
-                tray.setToolTip(f"{SERVICES[service]['name']} — waiting for {field.replace('_', '-')} allowance")
+                label = "5-hour" if field == "five_hour" else "weekly"
+                tray.setToolTip(f"{SERVICES[service]['name']} {label}: waiting for data")
                 menu = QMenu()
                 heading = QAction(f"{SERVICES[service]['name']} — {'5-hour' if field == 'five_hour' else 'weekly'} remaining", menu)
                 heading.setEnabled(False)

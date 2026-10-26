@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.1 — Compact numeric tray icons (2026-10-26)
+
+- Changed tray icons to show only the coloured percentage number on a transparent background.
+- Removed in-icon service/window labels; the hover tooltip and menu remain explicit about Codex vs Claude and 5-hour vs weekly windows.
+- Kept the managed backend lifecycle and all API behaviour unchanged.
+
 ## v2.0.0 — Cross-platform managed release (2026-10-26)
 
 - Replaced Windows-only C# WinForms frontend with one PySide6 tray/dashboard for Windows, macOS and Linux.

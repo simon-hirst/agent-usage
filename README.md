@@ -1,6 +1,6 @@
 # Codex + Claude Usage Tray
 
-**v2.0.0 — Windows / macOS / Linux**
+**v2.0.1 — Windows / macOS / Linux**
 
 A small cross-platform system-tray app showing the **percentage of subscription quota remaining** for **Codex / ChatGPT Work** and **Claude / Claude Code**. The tray starts and owns the two local usage API services **in the background**, so no backend terminal window is necessary. On **Exit — stop managed APIs**, both services started by this app are shut down.
 
@@ -11,7 +11,7 @@ The APIs remain independently useful for integrations:
 | Codex / ChatGPT Work | `http://127.0.0.1:3789/get` | `codex app-server` rate-limit RPC |
 | Claude / Claude Code | `http://127.0.0.1:3790/get` | Claude Code OAuth usage endpoint (unofficial) |
 
-**Green C** = Codex; **orange A** = Claude. **5h** and **7d** distinguish the two time windows. Tray numbers represent **percent remaining**, not used. Right-click any icon for dashboard, weekly icon toggle, startup option and Exit. Double-click/left-click an icon to open the dashboard (desktop behaviour varies).
+**Green numbers** = Codex; **orange numbers** = Claude. Tray icons now show **just the remaining percentage number** on a transparent background, matching the compact style of a plain numeric toolbar indicator. Hover or right-click any icon to see exactly which service/window it represents, then open the dashboard, toggle weekly icons, change startup behaviour or exit. Double-click/left-click an icon to open the dashboard (desktop behaviour varies).
 
 ## Install
 
