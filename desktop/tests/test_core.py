@@ -1,5 +1,6 @@
 import json
 import os
+import plistlib
 import pathlib
 import sys
 import tempfile
@@ -54,6 +55,22 @@ class TestCore(unittest.TestCase):
                     set_enabled(True, root=root, system=system, home=home)
                     path = destination(system, home)
                     self.assertTrue(path.is_file())
-                    self.assertIn(str(root), path.read_text())
+                    if system == 'Darwin':
+                        # Windows CI may pass an 8.3 short path for its temp directory;
+                        # the app resolves that to its long form before writing the plist.
+                        payload = plistlib.loads(path.read_bytes())
+                        self.assertEqual(
+                            pathlib.Path(payload['WorkingDirectory']).resolve(),
+                            root.resolve(),
+                        )
+                        self.assertEqual(
+                            pathlib.Path(payload['ProgramArguments'][1]).resolve(),
+                            (root / 'desktop' / 'run_app.py').resolve(),
+                        )
+                    else:
+                        # XDG Exec quoting doubles backslashes. Compare the canonical
+                        # path *as encoded* rather than the raw temporary directory.
+                        expected = str(root.resolve()).replace('\\', '\\\\')
+                        self.assertIn(expected, path.read_text(encoding='utf-8'))
                     set_enabled(False, root=root, system=system, home=home)
                     self.assertFalse(path.exists())
