@@ -41,3 +41,6 @@ requirements-installed
 bootstrap_git_history.py
 bootstrap_git_history_v2.0.1.py
 scrub_bootstrap_history.py
+
+# Local repository maintenance scripts
+prepare_github.py
