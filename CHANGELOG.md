@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.0.0 — Selectable providers and compact tray popup (2026-10-26)
+
+- First-run setup for selecting which providers to track.
+- Added optional single merged tray icon with compact click-to-expand usage view.
+- Full dashboard only opens when explicitly requested.
+- Added Muse CLI, Kimi Code quota, DeepSeek API balance, OpenRouter credits and configurable localhost bridges for additional providers.
+- Start/stop Codex and Claude backends only when selected; preserved existing managed-process lifecycle.
+- Kept Windows, macOS and Linux support and original localhost API endpoints.
+
+
 ## v2.0.1 — Compact numeric tray icons (2026-10-26)
 
 - Changed tray icons to show only the coloured percentage number on a transparent background.

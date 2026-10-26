@@ -13,6 +13,22 @@ SERVICES = {
     "codex": {"name": "Codex", "port": 3789, "folder": "work-codex-usage-api", "letter": "C"},
     "claude": {"name": "Claude", "port": 3790, "folder": "claude-usage-api", "letter": "A"},
 }
+# Display order is stable; disabled providers are neither queried nor shown.
+PROVIDERS = {
+    "codex": {"name": "Codex / ChatGPT Work", "short": "Codex", "colour": "#18A077", "source": "local", "hint": "Requires signed-in Codex CLI"},
+    "claude": {"name": "Claude / Claude Code", "short": "Claude", "colour": "#DB7958", "source": "local", "hint": "Requires signed-in Claude Code"},
+    "muse": {"name": "Muse Code", "short": "Muse", "colour": "#547AE8", "source": "muse", "hint": "Requires signed-in Muse Code CLI (`muse usage`)"},
+    "kimi": {"name": "Kimi Code", "short": "Kimi", "colour": "#8566D8", "source": "kimi", "hint": "Requires local Kimi server and KIMI_SERVER_TOKEN"},
+    "grok": {"name": "Grok", "short": "Grok", "colour": "#C4AD3C", "source": "bridge", "hint": "Subscription quotas require a local usage bridge"},
+    "deepseek": {"name": "DeepSeek API", "short": "DeepSeek", "colour": "#2883DD", "source": "deepseek", "hint": "Requires DEEPSEEK_API_KEY; displays API balance, not a subscription quota"},
+    "openrouter": {"name": "OpenRouter API", "short": "OpenRouter", "colour": "#9867CE", "source": "openrouter", "hint": "Requires OPENROUTER_API_KEY management key; displays API credits"},
+    "gemini": {"name": "Gemini", "short": "Gemini", "colour": "#468AE7", "source": "bridge", "hint": "Requires a local usage bridge"},
+    "copilot": {"name": "GitHub Copilot", "short": "Copilot", "colour": "#72798A", "source": "bridge", "hint": "Requires a local usage bridge"},
+    "cursor": {"name": "Cursor", "short": "Cursor", "colour": "#2BA99E", "source": "bridge", "hint": "Requires a local usage bridge"},
+    "windsurf": {"name": "Windsurf", "short": "Windsurf", "colour": "#47A7A9", "source": "bridge", "hint": "Requires a local usage bridge"},
+    "qwen": {"name": "Qwen", "short": "Qwen", "colour": "#AA70C4", "source": "bridge", "hint": "Requires a local usage bridge"},
+    "perplexity": {"name": "Perplexity", "short": "Perplexity", "colour": "#4DAEA7", "source": "bridge", "hint": "Requires a local usage bridge"},
+}
 ROOT = Path(__file__).resolve().parent.parent
 APP_ID = "codex-claude-usage"
 
@@ -38,7 +54,15 @@ def state_dir(system: str | None = None) -> Path:
     return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / APP_ID
 
 
-DEFAULTS = {"show_weekly": True, "manage_backends": True, "wsl_distro": "Debian"}
+DEFAULTS = {
+    "show_weekly": True,
+    "manage_backends": True,
+    "wsl_distro": "Debian",
+    "selected_providers": ["codex", "claude"],
+    "merged_icon": False,
+    "setup_complete": False,
+    "endpoints": {},
+}
 
 
 def load_settings(path: Path | None = None) -> dict[str, Any]:
@@ -50,12 +74,23 @@ def load_settings(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raw = {}
     out = DEFAULTS.copy()
-    for field in ("show_weekly", "manage_backends"):
+    for field in ("show_weekly", "manage_backends", "merged_icon", "setup_complete"):
         if isinstance(raw.get(field), bool):
             out[field] = raw[field]
     value = raw.get("wsl_distro")
     if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", value):
         out["wsl_distro"] = value
+    selected = raw.get("selected_providers")
+    if isinstance(selected, list) and all(isinstance(x, str) for x in selected):
+        filtered = list(dict.fromkeys(x for x in selected if x in PROVIDERS))
+        if filtered:
+            out["selected_providers"] = filtered
+    endpoints = raw.get("endpoints")
+    if isinstance(endpoints, dict):
+        out["endpoints"] = {
+            k: v for k, v in endpoints.items()
+            if k in PROVIDERS and isinstance(v, str) and len(v) <= 2048
+        }
     return out
 
 
@@ -63,7 +98,7 @@ def save_settings(settings: dict[str, Any], path: Path | None = None) -> None:
     path = path or (app_data_dir() / "settings.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps({k: settings[k] for k in DEFAULTS}, indent=2), encoding="utf-8")
+    temp.write_text(json.dumps({k: settings.get(k, DEFAULTS[k]) for k in DEFAULTS}, indent=2), encoding="utf-8")
     temp.replace(path)
 
 

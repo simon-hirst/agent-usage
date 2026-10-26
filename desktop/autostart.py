@@ -79,5 +79,5 @@ def set_enabled(enable: bool, root: Path = ROOT, system: str | None = None,
         launch = str(root / "start-linux.sh")
         # Escape characters per the desktop-file quoting convention.
         escaped = launch.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
-        contents = "[Desktop Entry]\nType=Application\nName=Codex + Claude Usage Tray\n" + f'Exec="{escaped}"\n' + "Terminal=false\nX-GNOME-Autostart-enabled=true\n"
+        contents = "[Desktop Entry]\nType=Application\nName=Provider Usage Tray\n" + f'Exec="{escaped}"\n' + "Terminal=false\nX-GNOME-Autostart-enabled=true\n"
         path.write_text(contents, encoding="utf-8")

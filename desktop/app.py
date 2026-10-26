@@ -1,109 +1,282 @@
-"""Cross-platform Qt system tray + dashboard; backend processes are owned here."""
+"""Cross-platform provider-selectable system tray with a compact click popup."""
 from __future__ import annotations
 
 import datetime as dt
+import html
 import json
-from pathlib import Path
+import os
+import platform
 import sys
 from typing import Any
 
-from PySide6.QtCore import Qt, QLockFile, QTimer, QUrl
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PySide6.QtCore import Qt, QLockFile, QProcess, QProcessEnvironment, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QCursor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame,
+    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
+    QProgressBar, QPushButton, QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 from .autostart import enabled as autostart_enabled, set_enabled as set_autostart
-from .core import ROOT, SERVICES, app_data_dir, load_settings, parse_response, save_settings
+from .core import ROOT, PROVIDERS, SERVICES, app_data_dir, load_settings, save_settings, secure_child_env
 from .processes import BackendManager
-
-COLOURS = {"codex": "#168466", "claude": "#BE6849"}
+from .providers import icon_number, is_local_url, normalize, parse_muse_usage
 
 
 def icon_for(service: str, field: str, remaining: float | None) -> QIcon:
-    """Transparent tray icon that shows only the remaining percentage number."""
+    """Small transparent, coloured numeric icon, never an invented usage figure."""
     pix = QPixmap(64, 64)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    colour = QColor(COLOURS[service])
     font = QFont("Arial", 34 if remaining is None or remaining >= 100 else 38, QFont.Weight.Bold)
-    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     painter.setFont(font)
-    number = "--" if remaining is None else str(int(round(remaining)))
+    value = "--" if remaining is None else str(int(round(remaining)))
     rect = pix.rect()
-
-    # subtle outline so the coloured number stays readable on light or dark trays
     for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        painter.setPen(QColor(0, 0, 0, 85))
-        painter.drawText(rect.adjusted(dx, dy, dx, dy), Qt.AlignmentFlag.AlignCenter, number)
+        painter.setPen(QColor(0, 0, 0, 80))
+        painter.drawText(rect.adjusted(dx, dy, dx, dy), Qt.AlignmentFlag.AlignCenter, value)
+    painter.setPen(QColor(PROVIDERS[service]["colour"]))
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, value)
+    painter.end()
+    return QIcon(pix)
 
-    painter.setPen(colour)
-    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, number)
+
+def combined_icon() -> QIcon:
+    pix = QPixmap(64, 64)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    colours = ("#18A077", "#DB7958", "#547AE8", "#8566D8")
+    for idx, colour in enumerate(colours):
+        painter.setBrush(QColor(colour))
+        painter.drawRoundedRect(7 + (idx % 2) * 27, 7 + (idx // 2) * 27, 23, 23, 6, 6)
     painter.end()
     return QIcon(pix)
 
 
 def local_reset(iso: Any) -> str:
     if not isinstance(iso, str) or not iso:
-        return "Reset time not available"
+        return "Reset time unavailable"
     try:
         stamp = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
         return "Resets " + stamp.astimezone().strftime("%a %d %b at %H:%M")
     except ValueError:
-        return "Reset time not available"
+        return "Reset time unavailable"
+
+
+def selected_services(settings: dict[str, Any]) -> list[str]:
+    return [key for key in PROVIDERS if key in settings["selected_providers"]]
+
+
+def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True) -> str:
+    if not snapshot or not snapshot.get("ok"):
+        reason = str((snapshot or {}).get("error") or "Waiting for usage data")
+        return "Unavailable — " + reason[:100]
+    fragments = []
+    for field, label in (("five_hour", "5h"), ("weekly", "7d"), ("monthly", "month")):
+        if field == "weekly" and not include_weekly:
+            continue
+        item = snapshot.get(field)
+        if isinstance(item, dict):
+            fragments.append(f"{label}: {item['remaining_percent']:g}% left")
+    if snapshot.get("balance_text"):
+        fragments.append(str(snapshot["balance_text"]))
+    if snapshot.get("credit_percent") is not None:
+        fragments.append(f"{snapshot['credit_percent']:g}% of purchased credits")
+    return " · ".join(fragments) or "No quota windows available"
+
+
+class ProviderSelection(QDialog):
+    def __init__(self, settings: dict[str, Any], first_run: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose providers to track" if first_run else "Usage tray settings")
+        self.setMinimumWidth(470)
+        self.setMinimumHeight(520)
+        self.settings = settings
+        outer = QVBoxLayout(self)
+        heading = QLabel("Choose what to track" if first_run else "Providers and preferences")
+        heading.setStyleSheet("font-size: 20px; font-weight: 700")
+        outer.addWidget(heading)
+        outer.addWidget(QLabel("Only selected providers appear in the tray and quick view."))
+        scrolling = QScrollArea()
+        scrolling.setWidgetResizable(True)
+        widget = QWidget()
+        body = QVBoxLayout(widget)
+        self.boxes: dict[str, QCheckBox] = {}
+        for key, meta in PROVIDERS.items():
+            entry = QCheckBox(meta["name"])
+            entry.setChecked(key in settings["selected_providers"])
+            entry.setToolTip(meta["hint"])
+            self.boxes[key] = entry
+            body.addWidget(entry)
+            hint = QLabel(meta["hint"])
+            hint.setStyleSheet("color: #777; padding-left: 23px; font-size: 11px")
+            hint.setWordWrap(True)
+            body.addWidget(hint)
+        body.addStretch()
+        scrolling.setWidget(widget)
+        outer.addWidget(scrolling, 1)
+        self.merged = QCheckBox("Combine all providers into one tray icon (click for quick view)")
+        self.merged.setChecked(settings["merged_icon"])
+        outer.addWidget(self.merged)
+        self.weekly = QCheckBox("Show separate weekly icons when not combined")
+        self.weekly.setChecked(settings["show_weekly"])
+        outer.addWidget(self.weekly)
+        self.manage = QCheckBox("Run selected Codex / Claude APIs in the background")
+        self.manage.setChecked(settings["manage_backends"])
+        outer.addWidget(self.manage)
+        self.startup = QCheckBox("Start automatically when signing in")
+        self.startup.setChecked(autostart_enabled())
+        outer.addWidget(self.startup)
+        form = QFormLayout()
+        self.distro = QLineEdit(settings["wsl_distro"])
+        form.addRow("WSL distro (Windows):", self.distro)
+        outer.addLayout(form)
+        advanced_button = QPushButton("Advanced: configure local usage bridges ▸")
+        advanced_button.setToolTip("For providers without a native quota reader, supply an HTTP localhost /get endpoint")
+        outer.addWidget(advanced_button)
+        self.advanced_widget = QWidget()
+        advanced_form = QFormLayout(self.advanced_widget)
+        outer.addWidget(self.advanced_widget)
+        self.advanced_widget.hide()
+        advanced_button.clicked.connect(lambda: self.advanced_widget.setVisible(not self.advanced_widget.isVisible()))
+        self.endpoint_edits: dict[str, QLineEdit] = {}
+        for key in ("muse", "kimi", "grok", "gemini", "copilot", "cursor", "windsurf", "qwen", "perplexity"):
+            entry = QLineEdit(settings["endpoints"].get(key, ""))
+            entry.setPlaceholderText("http://127.0.0.1:PORT/get" if key != "kimi" else "http://127.0.0.1:58627/api/v1/oauth/usage")
+            entry.setToolTip("Only http://localhost / 127.0.0.1 endpoints are accepted")
+            self.endpoint_edits[key] = entry
+            advanced_form.addRow(PROVIDERS[key]["short"] + " URL:", entry)
+        controls = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        controls.accepted.connect(self.accept)
+        controls.rejected.connect(self.reject)
+        outer.addWidget(controls)
+
+    def accept(self):
+        import re
+        selected = [k for k in PROVIDERS if self.boxes[k].isChecked()]
+        if not selected:
+            QMessageBox.warning(self, "Select a provider", "Choose at least one provider.")
+            return
+        if not re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", self.distro.text().strip()):
+            QMessageBox.warning(self, "Invalid distribution", "Enter a WSL distro name, e.g. Debian.")
+            return
+        endpoints = {key: edit.text().strip() for key, edit in self.endpoint_edits.items() if edit.text().strip()}
+        for key, url in endpoints.items():
+            if not is_local_url(url):
+                QMessageBox.warning(self, "Invalid endpoint", f"{key}: use an HTTP localhost URL with a port.")
+                return
+        try:
+            set_autostart(self.startup.isChecked())
+        except OSError as exc:
+            QMessageBox.warning(self, "Startup setting failed", str(exc))
+            return
+        self.settings.update({
+            "selected_providers": selected, "merged_icon": self.merged.isChecked(),
+            "show_weekly": self.weekly.isChecked(), "manage_backends": self.manage.isChecked(),
+            "wsl_distro": self.distro.text().strip(), "setup_complete": True, "endpoints": endpoints,
+        })
+        save_settings(self.settings)
+        super().accept()
+
+
+class QuickView(QWidget):
+    def __init__(self, controller: "TrayController"):
+        super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.controller = controller
+        self.setMinimumWidth(345)
+        self.setMaximumWidth(435)
+        self.setObjectName("quick")
+        self.setStyleSheet("#quick { background: palette(window); border: 1px solid palette(mid); border-radius: 10px; }")
+        outer = QVBoxLayout(self)
+        head = QHBoxLayout()
+        title = QLabel("Usage remaining")
+        title.setStyleSheet("font-weight: 700; font-size: 16px")
+        head.addWidget(title)
+        head.addStretch()
+        refresh = QPushButton("↻")
+        refresh.setToolTip("Refresh readings")
+        refresh.setMaximumWidth(34)
+        refresh.clicked.connect(controller.poll)
+        head.addWidget(refresh)
+        outer.addLayout(head)
+        self.content = QVBoxLayout()
+        outer.addLayout(self.content)
+        footer = QHBoxLayout()
+        dashboard = QPushButton("Open dashboard")
+        dashboard.clicked.connect(self.open_dashboard)
+        footer.addWidget(dashboard)
+        settings = QPushButton("Settings")
+        settings.clicked.connect(self.open_settings)
+        footer.addWidget(settings)
+        outer.addLayout(footer)
+
+    def open_dashboard(self):
+        self.hide()
+        self.controller.show_dashboard()
+
+    def open_settings(self):
+        self.hide()
+        self.controller.settings_dialog()
+
+    def redraw(self):
+        while self.content.count():
+            child = self.content.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        for service in selected_services(self.controller.settings):
+            entry = QLabel(f"<b style='color:{PROVIDERS[service]['colour']}'>{PROVIDERS[service]['short']}</b>"
+                           + "<br>" + html.escape(usage_summary(self.controller.snapshots.get(service))))
+            entry.setTextFormat(Qt.TextFormat.RichText)
+            entry.setWordWrap(True)
+            entry.setStyleSheet("padding: 4px 3px")
+            self.content.addWidget(entry)
+        self.adjustSize()
+
+    def show_at_cursor(self):
+        self.redraw()
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        bounds = screen.availableGeometry()
+        self.adjustSize()
+        cursor = QCursor.pos()
+        x = max(bounds.left(), min(cursor.x() - self.width() // 2, bounds.right() - self.width()))
+        y = cursor.y() - self.height() - 12
+        if y < bounds.top():
+            y = min(cursor.y() + 12, bounds.bottom() - self.height())
+        self.move(x, y)
+        self.show()
+        self.raise_()
 
 
 class Dashboard(QDialog):
     def __init__(self, controller: "TrayController"):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("Codex + Claude — quota remaining")
-        self.setMinimumWidth(420)
-        self.setWindowIcon(icon_for("codex", "five_hour", None))
-        outer = QVBoxLayout(self)
-        title = QLabel("Codex + Claude usage")
-        title.setStyleSheet("font-size: 21px; font-weight: 700; padding-bottom: 4px;")
-        outer.addWidget(title)
-        outer.addWidget(QLabel("Percentages are remaining, not used. Updated by the local APIs."))
-        self.widgets: dict[tuple[str, str], tuple[QProgressBar, QLabel]] = {}
-        self.status_labels: dict[str, QLabel] = {}
-        for service, meta in SERVICES.items():
-            group = QGroupBox(meta["name"])
-            layout = QVBoxLayout(group)
-            status = QLabel("Connecting…")
-            self.status_labels[service] = status
-            layout.addWidget(status)
-            for field, label in (("five_hour", "5-hour allowance"), ("weekly", "Weekly allowance")):
-                row = QHBoxLayout()
-                row.addWidget(QLabel(label))
-                details = QLabel("--")
-                details.setAlignment(Qt.AlignmentFlag.AlignRight)
-                row.addWidget(details)
-                layout.addLayout(row)
-                bar = QProgressBar()
-                bar.setMinimum(0)
-                bar.setMaximum(100)
-                bar.setValue(0)
-                bar.setFormat("--")
-                bar.setStyleSheet(f"QProgressBar::chunk {{background-color: {COLOURS[service]};}}")
-                layout.addWidget(bar)
-                self.widgets[(service, field)] = (bar, details)
-            outer.addWidget(group)
+        self.setWindowTitle("Provider usage — dashboard")
+        self.setMinimumSize(465, 410)
+        self.setWindowIcon(combined_icon())
+        root = QVBoxLayout(self)
+        root.addWidget(QLabel("<h2>Usage remaining</h2>"))
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.content_widget = QWidget()
+        self.content = QVBoxLayout(self.content_widget)
+        self.scroll.setWidget(self.content_widget)
+        root.addWidget(self.scroll)
         actions = QHBoxLayout()
-        refresh = QPushButton("Refresh display")
+        refresh = QPushButton("Refresh")
         refresh.clicked.connect(controller.poll)
         actions.addWidget(refresh)
         settings = QPushButton("Settings")
         settings.clicked.connect(controller.settings_dialog)
         actions.addWidget(settings)
-        hide = QPushButton("Hide")
-        hide.clicked.connect(self.hide)
-        actions.addWidget(hide)
-        outer.addLayout(actions)
+        close = QPushButton("Hide")
+        close.clicked.connect(self.hide)
+        actions.addWidget(close)
+        root.addLayout(actions)
 
     def closeEvent(self, event):
         if self.controller.tray_available:
@@ -113,146 +286,131 @@ class Dashboard(QDialog):
             self.controller.exit_app()
             event.accept()
 
-    def redraw(self) -> None:
-        for service in SERVICES:
-            data = self.controller.snapshots.get(service) or {"ok": False}
-            status = self.status_labels[service]
-            if data.get("ok"):
-                status.setText("Online · last cached reading is fresh")
+    def redraw(self):
+        while self.content.count():
+            child = self.content.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        for service in selected_services(self.controller.settings):
+            group = QGroupBox(PROVIDERS[service]["name"])
+            box = QVBoxLayout(group)
+            snap = self.controller.snapshots.get(service)
+            if not snap or not snap.get("ok"):
+                details = QLabel(usage_summary(snap))
+                details.setWordWrap(True)
+                box.addWidget(details)
             else:
-                reason = str(data.get("error") or "Waiting for backend")[:180]
-                status.setText(f"Offline / stale: {reason}")
-            for field in ("five_hour", "weekly"):
-                bar, detail = self.widgets[(service, field)]
-                window = data.get(field) if data.get("ok") else None
-                if not window:
-                    bar.setValue(0)
-                    bar.setFormat("--")
-                    detail.setText("Not available")
-                    continue
-                n = window["remaining_percent"]
-                bar.setValue(round(n))
-                bar.setFormat(f"{n:g}% left")
-                detail.setText(local_reset(window.get("resets_at")))
-
-
-class SettingsDialog(QDialog):
-    def __init__(self, controller: "TrayController"):
-        super().__init__(controller.dashboard)
-        self.setWindowTitle("Usage Tray settings")
-        self.setMinimumWidth(385)
-        layout = QVBoxLayout(self)
-        self.show_weekly = QCheckBox("Show weekly icons in tray (four instead of two)")
-        self.show_weekly.setChecked(controller.settings["show_weekly"])
-        layout.addWidget(self.show_weekly)
-        self.manage = QCheckBox("Automatically run both APIs in the background")
-        self.manage.setChecked(controller.settings["manage_backends"])
-        layout.addWidget(self.manage)
-        self.startup = QCheckBox("Start automatically when signing in")
-        self.startup.setChecked(autostart_enabled())
-        layout.addWidget(self.startup)
-        form = QFormLayout()
-        self.distro = QLineEdit(controller.settings["wsl_distro"])
-        self.distro.setToolTip("Windows only. Must be a WSL distro with Codex and Claude Code signed in.")
-        form.addRow("WSL distribution (Windows):", self.distro)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Managed API processes stop when you Exit the tray app.\nExisting independently started servers are never terminated."))
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def accept(self):
-        import re
-        name = self.distro.text().strip()
-        if not re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", name):
-            QMessageBox.warning(self, "Invalid distro", "Use a valid WSL distribution name such as Debian.")
-            return
-        try:
-            set_autostart(self.startup.isChecked())
-        except OSError as exc:
-            QMessageBox.warning(self, "Startup setting failed", str(exc))
-            return
-        c = self.parent().controller
-        c.settings.update({"show_weekly": self.show_weekly.isChecked(), "manage_backends": self.manage.isChecked(), "wsl_distro": name})
-        save_settings(c.settings)
-        c.manager.wsl_distro = name
-        if not c.settings["manage_backends"]:
-            c.manager.stop()
-        elif not c.manager.enabled:
-            c.manager = BackendManager(root=ROOT, wsl_distro=name)
-            c.manager.ensure_running()
-        c.apply_visibility()
-        c.update_menus()
-        super().accept()
+                found = False
+                for key, label in (("five_hour", "5-hour"), ("weekly", "Weekly"), ("monthly", "Monthly")):
+                    value = snap.get(key)
+                    if not isinstance(value, dict):
+                        continue
+                    found = True
+                    row = QLabel(f"{label}: <b>{value['remaining_percent']:g}% remaining</b> — {local_reset(value.get('resets_at'))}")
+                    row.setWordWrap(True)
+                    box.addWidget(row)
+                    progress = QProgressBar()
+                    progress.setRange(0, 100)
+                    progress.setValue(int(round(value["remaining_percent"])))
+                    progress.setStyleSheet(f"QProgressBar::chunk {{ background: {PROVIDERS[service]['colour']}; }}")
+                    box.addWidget(progress)
+                if snap.get("balance_text"):
+                    box.addWidget(QLabel("Balance: " + snap["balance_text"]))
+                    found = True
+                if snap.get("credit_percent") is not None:
+                    box.addWidget(QLabel(f"Purchased credits: {snap['credit_percent']:g}% remaining"))
+                    found = True
+                if not found:
+                    box.addWidget(QLabel("No quota windows available for this account"))
+            self.content.addWidget(group)
+        self.content.addStretch()
 
 
 class TrayController:
-    def __init__(self, app: QApplication):
+    def __init__(self, app: QApplication, settings: dict[str, Any]):
         self.app = app
         self.app.setQuitOnLastWindowClosed(False)
-        self.settings = load_settings()
-        self.manager = BackendManager(wsl_distro=self.settings["wsl_distro"])
-        self.manager.enabled = self.settings["manage_backends"]
-        self.snapshots: dict[str, dict[str, Any]] = {}
+        self.settings = settings
         self.tray_available = QSystemTrayIcon.isSystemTrayAvailable()
-        self.net = QNetworkAccessManager(self.app)
+        self.manager = BackendManager(wsl_distro=settings["wsl_distro"])
+        self.manager.enabled = settings["manage_backends"]
+        self.manager.set_selected(settings["selected_providers"])
+        self.snapshots: dict[str, dict[str, Any]] = {}
+        self.net = QNetworkAccessManager(app)
         self.trays: dict[tuple[str, str], QSystemTrayIcon] = {}
         self.menus: list[QMenu] = []
-        self.weekly_actions: list[QAction] = []
-        self.startup_actions: list[QAction] = []
+        self.muse_proc: QProcess | None = None
+        self.muse_started = False
         self.dashboard = Dashboard(self)
-        for service in SERVICES:
-            for field in ("five_hour", "weekly"):
-                tray = QSystemTrayIcon(self.app)
-                tray.setIcon(icon_for(service, field, None))
-                label = "5-hour" if field == "five_hour" else "weekly"
-                tray.setToolTip(f"{SERVICES[service]['name']} {label}: waiting for data")
-                menu = QMenu()
-                heading = QAction(f"{SERVICES[service]['name']} — {'5-hour' if field == 'five_hour' else 'weekly'} remaining", menu)
-                heading.setEnabled(False)
-                menu.addAction(heading)
-                menu.addSeparator()
-                dashboard_action = menu.addAction("Open dashboard")
-                dashboard_action.triggered.connect(self.show_dashboard)
-                weekly_action = menu.addAction("Show weekly tray icons")
-                weekly_action.setCheckable(True)
-                weekly_action.triggered.connect(self.toggle_weekly)
-                self.weekly_actions.append(weekly_action)
-                startup_action = menu.addAction("Start with my computer")
-                startup_action.setCheckable(True)
-                startup_action.triggered.connect(self.toggle_autostart)
-                self.startup_actions.append(startup_action)
-                settings_action = menu.addAction("Settings…")
-                settings_action.triggered.connect(self.settings_dialog)
-                menu.addSeparator()
-                exit_action = menu.addAction("Exit — stop managed APIs")
-                exit_action.triggered.connect(self.exit_app)
-                tray.setContextMenu(menu)
-                tray.activated.connect(self.on_activated)
-                self.trays[(service, field)] = tray
-                self.menus.append(menu)
-        self.update_menus()
-        self.apply_visibility()
-        self.refresh_timer = QTimer(self.app)
+        self.quick = QuickView(self)
+        self.merged_tray = QSystemTrayIcon(combined_icon(), app)
+        self.merged_tray.setToolTip("Provider usage — click for quick view")
+        self._configure_tray(self.merged_tray, None)
+        self.rebuild_icons()
+        self.refresh_timer = QTimer(app)
         self.refresh_timer.timeout.connect(self.poll)
         self.refresh_timer.start(60_000)
-        self.boot_timer = QTimer(self.app)
-        self.boot_timer.timeout.connect(self.poll)
+        self.boot_timer = QTimer(app)
+        self.boot_timer.timeout.connect(lambda: self.poll(boot=True))
         self.boot_checks = 0
-        self.boot_timer.start(8_000)
-        self.app.aboutToQuit.connect(lambda: self.manager.stop())
+        self.boot_timer.start(8000)
+        self.app.aboutToQuit.connect(self.manager.stop)
         self.manager.ensure_running()
         self.poll()
         if not self.tray_available:
-            self.dashboard.show()
-            QMessageBox.information(self.dashboard, "System tray unavailable",
-                                    "Your desktop currently has no supported system tray. The dashboard will stay open.\n"
-                                    "On GNOME/Wayland, you may need an AppIndicator extension.")
+            self.show_dashboard()
+            QMessageBox.information(self.dashboard, "No system tray", "No usable tray was detected. The dashboard will stay open; closing it stops managed services.")
+
+    def _configure_tray(self, tray: QSystemTrayIcon, which: tuple[str, str] | None):
+        menu = QMenu()
+        if which is not None:
+            service, field = which
+            heading = menu.addAction(f"{PROVIDERS[service]['name']} — {field.replace('_', ' ')}")
+            heading.setEnabled(False)
+            menu.addSeparator()
+        popup = menu.addAction("Quick view")
+        popup.triggered.connect(self.show_quick_view)
+        dashboard = menu.addAction("Open dashboard")
+        dashboard.triggered.connect(self.show_dashboard)
+        settings = menu.addAction("Choose providers / Settings")
+        settings.triggered.connect(self.settings_dialog)
+        menu.addSeparator()
+        quit_action = menu.addAction("Exit — stop managed backends")
+        quit_action.triggered.connect(self.exit_app)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self.on_activated)
+        self.menus.append(menu)
+
+    def rebuild_icons(self):
+        for tray in self.trays.values():
+            tray.hide()
+            tray.deleteLater()
+        self.trays.clear()
+        self.merged_tray.setVisible(False)
+        if self.settings["merged_icon"]:
+            self.merged_tray.setVisible(self.tray_available)
+            return
+        for service in selected_services(self.settings):
+            fields = ("five_hour", "weekly") if self.settings["show_weekly"] and service not in ("deepseek", "openrouter") else ("five_hour",)
+            for field in fields:
+                tray = QSystemTrayIcon(self.app)
+                snap = self.snapshots.get(service)
+                value = snap.get(field) if snap and snap.get("ok") else None
+                remaining = value.get("remaining_percent") if isinstance(value, dict) else None
+                if remaining is None and field == "five_hour" and service == "openrouter" and snap and snap.get("ok"):
+                    remaining = snap.get("credit_percent")
+                tray.setIcon(icon_for(service, field, remaining))
+                tray.setToolTip(PROVIDERS[service]["name"] + ": " + usage_summary(snap))
+                self._configure_tray(tray, (service, field))
+                tray.show() if self.tray_available else None
+                self.trays[(service, field)] = tray
 
     def on_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
-            self.show_dashboard()
+            self.show_quick_view()
+
+    def show_quick_view(self):
+        self.quick.show_at_cursor()
 
     def show_dashboard(self):
         self.dashboard.redraw()
@@ -260,68 +418,152 @@ class TrayController:
         self.dashboard.raise_()
         self.dashboard.activateWindow()
 
-    def update_menus(self):
-        for action in self.weekly_actions:
-            action.setChecked(self.settings["show_weekly"])
-        for action in self.startup_actions:
-            action.setChecked(autostart_enabled())
-
-    def toggle_weekly(self, checked):
-        self.settings["show_weekly"] = bool(checked)
-        save_settings(self.settings)
-        self.update_menus()
-        self.apply_visibility()
-
-    def toggle_autostart(self, checked):
-        try:
-            set_autostart(bool(checked))
-        except OSError as exc:
-            QMessageBox.warning(self.dashboard, "Startup setting failed", str(exc))
-        self.update_menus()
-
-    def apply_visibility(self):
-        for (service, field), tray in self.trays.items():
-            tray.setVisible(self.tray_available and (field != "weekly" or self.settings["show_weekly"]))
-
     def settings_dialog(self):
-        SettingsDialog(self).exec()
+        dialog = ProviderSelection(self.settings.copy(), first_run=False, parent=self.dashboard)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.settings = dialog.settings
+        if not self.settings["manage_backends"]:
+            self.manager.stop()
+        elif not self.manager.enabled or self.manager.wsl_distro != self.settings["wsl_distro"]:
+            self.manager.stop()
+            self.manager = BackendManager(wsl_distro=self.settings["wsl_distro"])
+        self.manager.set_selected(self.settings["selected_providers"])
+        if "muse" not in self.settings["selected_providers"] and self.muse_proc is not None:
+            self.muse_proc.kill()
+            self.muse_proc = None
+        self.manager.ensure_running()
+        self.rebuild_icons()
+        self.poll()
+        if self.dashboard.isVisible():
+            self.dashboard.redraw()
 
-    def poll(self):
+    def poll(self, boot=False):
         self.manager.ensure_running()
         if self.boot_timer.isActive():
             self.boot_checks += 1
-            if self.boot_checks >= 15 or all(self.snapshots.get(s, {}).get("ok") for s in SERVICES):
+            if self.boot_checks >= 15 or all(s in self.snapshots and self.snapshots[s].get("ok") for s in selected_services(self.settings)):
                 self.boot_timer.stop()
-        for service, meta in SERVICES.items():
-            request = QNetworkRequest(QUrl(f"http://127.0.0.1:{meta['port']}/get"))
-            request.setTransferTimeout(4500)
+        for service in selected_services(self.settings):
+            if boot and service not in SERVICES:
+                # Startup retries are for local WSL servers only; no extra remote API calls.
+                continue
+            source = PROVIDERS[service]["source"]
+            endpoint = self.settings["endpoints"].get(service)
+            if source == "local":
+                url = f"http://127.0.0.1:{SERVICES[service]['port']}/get"
+                token = None
+            elif endpoint:
+                if not is_local_url(endpoint):
+                    self.consume_error(service, "Configured URL must point to localhost")
+                    continue
+                url, token = endpoint, os.environ.get("KIMI_SERVER_TOKEN") if service == "kimi" else None
+            elif source == "kimi":
+                url, token = "http://127.0.0.1:58627/api/v1/oauth/usage", os.environ.get("KIMI_SERVER_TOKEN")
+            elif source == "deepseek":
+                url, token = "https://api.deepseek.com/user/balance", os.environ.get("DEEPSEEK_API_KEY")
+            elif source == "openrouter":
+                url, token = "https://openrouter.ai/api/v1/credits", os.environ.get("OPENROUTER_API_KEY")
+            elif source == "muse":
+                self.poll_muse()
+                continue
+            else:
+                self.consume_error(service, "Set a localhost usage bridge URL in Settings")
+                continue
+            if service in ("deepseek", "openrouter") and not token:
+                self.consume_error(service, "Missing API key environment variable (see README)")
+                continue
+            if source == "kimi" and not token:
+                self.consume_error(service, "Set KIMI_SERVER_TOKEN for your running Kimi local server")
+                continue
+            request = QNetworkRequest(QUrl(url))
+            request.setTransferTimeout(7000)
+            request.setRawHeader(b"Accept", b"application/json")
+            if token:
+                request.setRawHeader(b"Authorization", b"Bearer " + token.encode("utf-8"))
             reply = self.net.get(request)
             reply.finished.connect(lambda r=reply, s=service: self.consume(s, r))
+
+    def poll_muse(self):
+        if self.muse_proc is not None and self.muse_proc.state() != QProcess.ProcessState.NotRunning:
+            return
+        process = QProcess(self.app)
+        self.muse_proc = process
+        env = QProcessEnvironment()
+        for key, value in secure_child_env().items():
+            env.insert(key, value)
+        process.setProcessEnvironment(env)
+        if platform.system() == "Windows":
+            process.setProgram("wsl.exe")
+            process.setArguments(["-d", self.settings["wsl_distro"], "--", "bash", "-ic", "muse usage"])
+        else:
+            process.setProgram("muse")
+            process.setArguments(["usage"])
+        process.finished.connect(lambda code, status, proc=process: self.consume_muse(proc, code))
+        process.errorOccurred.connect(lambda error, proc=process: self.muse_error(proc))
+        process.start()
+        QTimer.singleShot(12000, lambda proc=process: self.timeout_muse(proc))
+
+    def timeout_muse(self, process: QProcess):
+        if process is self.muse_proc and process.state() != QProcess.ProcessState.NotRunning:
+            self.consume_error("muse", "Muse CLI usage command timed out")
+            process.kill()
+
+    def muse_error(self, process: QProcess):
+        if process is not self.muse_proc:
+            return
+        if process.error() == QProcess.ProcessError.FailedToStart:
+            self.consume_error("muse", "Muse CLI not found (install and sign in to Muse Code)")
+            self.muse_proc = None
+            process.deleteLater()
+
+    def consume_muse(self, process: QProcess, exit_code: int):
+        if process is not self.muse_proc:
+            return
+        data = bytes(process.readAllStandardOutput())
+        err = bytes(process.readAllStandardError())
+        self.muse_proc = None
+        process.deleteLater()
+        if "muse" not in self.settings["selected_providers"]:
+            return
+        try:
+            if exit_code:
+                raise ValueError("Muse CLI returned an error: " + err.decode("utf-8", "replace")[:160])
+            result = parse_muse_usage(data.decode("utf-8", "replace"))
+            self.set_snapshot("muse", result)
+        except ValueError as exc:
+            self.consume_error("muse", str(exc))
 
     def consume(self, service: str, reply: QNetworkReply):
         try:
             data = bytes(reply.readAll())
-            if len(data) > 262_144:
+            if len(data) > 262144:
                 raise ValueError("Response too large")
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 raise ValueError(reply.errorString())
-            snapshot = parse_response(json.loads(data.decode("utf-8")))
+            self.set_snapshot(service, normalize(service, json.loads(data.decode("utf-8"))))
         except (ValueError, UnicodeError) as exc:
-            snapshot = {"ok": False, "error": str(exc)[:200], "five_hour": None, "weekly": None}
+            self.consume_error(service, str(exc))
         finally:
             reply.deleteLater()
-        self.snapshots[service] = snapshot
+
+    def consume_error(self, service: str, error: str):
+        self.set_snapshot(service, {"ok": False, "error": error[:220], "five_hour": None, "weekly": None})
+
+    def set_snapshot(self, service: str, result: dict[str, Any]):
+        self.snapshots[service] = result
         for field in ("five_hour", "weekly"):
-            window = snapshot.get(field) if snapshot["ok"] else None
-            remaining = window["remaining_percent"] if window else None
-            tray = self.trays[(service, field)]
+            tray = self.trays.get((service, field))
+            if tray is None:
+                continue
+            item = result.get(field) if result.get("ok") else None
+            remaining = item.get("remaining_percent") if isinstance(item, dict) else None
+            if remaining is None and field == "five_hour" and service == "openrouter" and result.get("ok"):
+                remaining = result.get("credit_percent")
             tray.setIcon(icon_for(service, field, remaining))
-            label = "5-hour" if field == "five_hour" else "weekly"
-            if remaining is None:
-                detail = str(snapshot.get("error") or "Window unavailable")
-                tray.setToolTip(f"{SERVICES[service]['name']} {label}: -- ({detail[:100]})")
-            else:
-                tray.setToolTip(f"{SERVICES[service]['name']} {label}: {remaining:g}% remaining\n{local_reset(window.get('resets_at'))}")
+            tray.setToolTip(PROVIDERS[service]["name"] + " — " + usage_summary(result))
+        if self.quick.isVisible():
+            self.quick.redraw()
         if self.dashboard.isVisible():
             self.dashboard.redraw()
 
@@ -330,26 +572,36 @@ class TrayController:
         self.boot_timer.stop()
         for tray in self.trays.values():
             tray.hide()
+        self.merged_tray.hide()
+        if self.muse_proc is not None:
+            self.muse_proc.kill()
+            self.muse_proc.waitForFinished(1000)
         self.manager.stop()
         self.app.quit()
 
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Codex Claude Usage")
+    app.setApplicationName("Provider Usage Tray")
     app.setOrganizationName("Local Usage Monitor")
     lockpath = app_data_dir() / "tray.lock"
     lockpath.parent.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(lockpath))
-    lock.setStaleLockTime(30_000)
+    lock.setStaleLockTime(30000)
     if not lock.tryLock(0):
-        return 0  # Another copy is already running. Do not duplicate backends.
+        return 0
     controller = None
     try:
-        controller = TrayController(app)
+        settings = load_settings()
+        if not settings["setup_complete"]:
+            setup = ProviderSelection(settings, first_run=True)
+            if setup.exec() != QDialog.DialogCode.Accepted:
+                return 0
+            settings = setup.settings
+        controller = TrayController(app, settings)
         return app.exec()
     finally:
-        if controller is not None:
+        if controller:
             controller.manager.stop()
         lock.unlock()
 

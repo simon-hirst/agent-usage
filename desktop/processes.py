@@ -32,6 +32,7 @@ class BackendManager:
         self.log_paths: dict[str, Path] = {}
         self.errors: dict[str, str] = {}
         self.enabled = True
+        self.selected_services = set(SERVICES)
 
     def _cmd(self, service: str) -> list[str]:
         if self.system == "Windows":
@@ -40,10 +41,44 @@ class BackendManager:
             return ["wsl.exe", "-d", self.wsl_distro, "--", "bash", "-i", "./desktop/managed-wsl.sh", service]
         return [sys.executable, str(self.root / "desktop" / "managed_native.py"), service]
 
+    def set_selected(self, providers) -> None:
+        """Stop only children we own when their provider is deselected."""
+        selected = set(providers) & set(SERVICES)
+        for service in list(self.children):
+            if service not in selected:
+                self._stop_child(service)
+        self.selected_services = selected
+
+    def _stop_child(self, service: str) -> None:
+        child = self.children.pop(service, None)
+        if child is None:
+            return
+        if child.poll() is None and child.stdin:
+            try:
+                child.stdin.write(b"stop\n")
+                child.stdin.flush()
+            except OSError:
+                pass
+            try:
+                child.stdin.close()
+            except OSError:
+                pass
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                child.terminate()
+                child.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                child.kill()
+                child.wait(timeout=2)
+
     def ensure_running(self) -> None:
         if not self.enabled:
             return
         for service, meta in SERVICES.items():
+            if service not in self.selected_services:
+                continue
             child = self.children.get(service)
             if child is not None and child.poll() is not None:
                 self.children.pop(service, None)
@@ -86,29 +121,5 @@ class BackendManager:
 
     def stop(self) -> None:
         self.enabled = False
-        children, self.children = self.children, {}
-        for child in children.values():
-            if child.poll() is None and child.stdin:
-                try:
-                    child.stdin.write(b"stop\n")
-                    child.stdin.flush()
-                except OSError:
-                    pass
-                try:
-                    child.stdin.close()
-                except OSError:
-                    pass
-        for child in children.values():
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                # Only our wrapper process; user-started services are untouched.
-                try:
-                    child.terminate()
-                    child.wait(timeout=2)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        child.kill()
-                        child.wait(timeout=2)
-                    except OSError:
-                        pass
+        for service in list(self.children):
+            self._stop_child(service)

@@ -8,7 +8,8 @@ $original = @{}
 $keep = @('SystemRoot','windir','SystemDrive','ComSpec','Path','PATHEXT','TEMP','TMP',
     'USERPROFILE','APPDATA','LOCALAPPDATA','HOMEDRIVE','HOMEPATH','OS',
     'PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','ProgramFiles',
-    'ProgramFiles(x86)','ProgramW6432','CommonProgramFiles','CommonProgramFiles(x86)')
+    'ProgramFiles(x86)','ProgramW6432','CommonProgramFiles','CommonProgramFiles(x86)',
+    'DEEPSEEK_API_KEY','OPENROUTER_API_KEY','KIMI_SERVER_TOKEN')
 try {
     foreach ($entry in (Get-ChildItem Env:)) {
         $original[$entry.Name] = $entry.Value
