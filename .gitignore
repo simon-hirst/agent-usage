@@ -36,3 +36,8 @@ Thumbs.db
 tray.lock
 requirements-installed
 *.tmp
+
+# Local Git history maintenance scripts (never publish)
+bootstrap_git_history.py
+bootstrap_git_history_v2.0.1.py
+scrub_bootstrap_history.py
