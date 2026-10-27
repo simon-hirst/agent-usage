@@ -1,92 +1,87 @@
 # Provider Usage Tray
 
-A small **Windows, macOS and Linux** system-tray app for tracking usage limits from your coding agents and model providers. It updates approximately once a minute, shows only the providers you select and can combine them into **one tray icon**.
+A cross-platform system tray monitor for coding assistants and model providers. Track your remaining usage, see when limits reset, and keep everything in one place without opening a dozen dashboards.
 
-**Click the tray icon** for a small usage popup. Use **Open dashboard** only when you want the full window. Right-click for the menu. Your selected providers can be changed at any time under Settings.
+**Windows · macOS · Linux** — x64 and ARM64
+
+[**Download the latest release**](https://github.com/simon-hirst/agent-usage/releases/latest) · [Report an issue](https://github.com/simon-hirst/agent-usage/issues)
+
+## Overview
+
+Provider Usage Tray runs quietly in the background and checks selected providers approximately once a minute.
+
+- **At a glance:** coloured tray numbers show remaining quota; hover to see reset times in your local timezone.
+- **One icon or many:** use individual indicators, or click a single merged icon for a compact usage view.
+- **Your providers:** choose what to track on first launch and change it later in Settings.
+- **No extra windows:** the full dashboard opens only when you select **Open dashboard**.
+- **Automatic startup:** optionally launch on sign-in. App-managed Codex and Claude backends start and stop with the tray.
+
+A provider may report a five-hour limit, a weekly/monthly allowance, or an API credit balance. These are displayed as separate measurements; unavailable values are never treated as zero.
+
+## Architecture
+
+The application is split into a small desktop client, provider readers, and two managed local APIs:
+
+| Component | Source | Description |
+| --- | --- | --- |
+| Tray and dashboard | [`desktop/`](desktop/) | PySide6 interface, provider selection, compact popup, and local-time reset tooltips. |
+| Codex usage API | [`work-codex-usage-api/`](work-codex-usage-api/) | Reads subscription limits from the authenticated Codex CLI. Serves `127.0.0.1:3789/get`. |
+| Claude usage API | [`claude-usage-api/`](claude-usage-api/) | Reads Claude Code subscription usage. Serves `127.0.0.1:3790/get`. |
+| Other provider readers | [`desktop/extra_readers.py`](desktop/extra_readers.py) | Reads available quota or billing data from authenticated CLIs, editors, browsers, and provider APIs. |
+| Process management | [`desktop/processes.py`](desktop/processes.py) | Starts selected local backends silently and stops only processes the tray started. |
+| Releases | [`.github/workflows/`](.github/workflows/) | Tests and packages native builds for all six OS/architecture targets. |
+
+The two `/get` endpoints remain available to other local applications while their backends are running.
 
 ## Download and run
 
-Open **GitHub → Releases** and download the package for your operating system and CPU:
+Download the build for your system from [GitHub Releases](https://github.com/simon-hirst/agent-usage/releases/latest):
 
-| Operating system | Downloads |
-| --- | --- |
-| Windows 10/11 | `windows-x64.zip` or `windows-arm64.zip` |
-| macOS (Intel / Apple Silicon) | `macos-x64.app.zip` or `macos-arm64.app.zip` |
-| Linux | `linux-x64.tar.gz` or `linux-arm64.tar.gz` |
-
-**Windows:** extract the entire ZIP, then run `ProviderUsageTray.exe`. **macOS:** unzip and open `ProviderUsageTray.app` (unsigned builds may require approving it in Privacy & Security). **Linux:** extract the archive and run `./ProviderUsageTray/ProviderUsageTray` from a desktop session with a tray.
-
-You **do not need to install Python or build the application**. You still need the relevant provider CLIs/accounts: on Windows, Codex and Claude use Python 3 and authenticated CLIs **inside your configured WSL distro**; on macOS/Linux, they use the native CLI logins. Optional providers have their own setup requirements below.
-
-### Running from source (developers)
-
-Requires Python 3.10+. The launcher installs the Qt desktop dependency on first run.
-
-| OS | Run from the repository root |
-| --- | --- |
-| Windows 10/11 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-windows.ps1` |
-| macOS | `./start-macos.sh` |
-| Linux | `./start-linux.sh` |
-
-On first launch, choose the providers you use and whether to **Combine into one tray icon**. Toggle **Start automatically when signing in** if wanted.
-
-For Codex/Claude on Windows, install and sign into both CLIs in **Debian WSL** (or change the distribution in Settings). On macOS/Linux, sign into them natively. Their localhost servers are launched silently and stopped automatically when you exit the tray. Existing standalone servers are not stopped.
-
-## Provider connections
-
-| Provider | What the app reads | Required setup |
+| Platform | Package | Run |
 | --- | --- | --- |
-| **Codex / ChatGPT Work** | 5-hour and weekly allowances | Signed-in Codex CLI; managed local API on port `3789` |
-| **Claude / Claude Code** | 5-hour and weekly allowances | Signed-in Claude Code; managed local API on port `3790` |
-| **Muse Code** | 5-hour and weekly allowances where reported | Signed-in Muse CLI, running `muse usage` periodically |
-| **Kimi Code** | 5-hour, legacy weekly, monthly limits where present | Running Kimi local web API; `KIMI_SERVER_TOKEN` environment variable |
-| **DeepSeek API** | Current API balance | `DEEPSEEK_API_KEY` environment variable |
-| **OpenRouter API** | Available API credits and percentage of purchased credits | `OPENROUTER_API_KEY` **management** key |
-| **Gemini Code Assist** | Model-specific remaining quota and reset dates | Signed-in Gemini CLI using OAuth on the same OS/WSL environment; Google CLI OAuth availability depends on account type |
-| **GitHub Copilot** | Monthly quota percentage and reset date when reported | Signed-in `gh` CLI (`gh auth login`) on same OS/WSL; uses an undocumented GitHub endpoint |
-| **Grok** | CLI billing quota (weekly/monthly/credits when reported) | `grok login` in CLI environment |
-| **Cursor** | Editor plan usage; shared Grok weekly pool on supported accounts | Signed-in Cursor editor or browser |
-| **Windsurf** | Editor-cached daily/weekly quota or named counters | Signed-in Windsurf editor |
-| **Qwen Cloud** | Individual Token Plan 5h/weekly quotas (best effort) | Signed-in Qwen Cloud browser session |
-| **Perplexity** | Remaining account credits (not search allowance) | Signed-in Perplexity browser session |
+| Windows (x64 / ARM64) | `windows-*.zip` | Extract and launch `ProviderUsageTray.exe`. |
+| macOS (Intel / Apple Silicon) | `macos-*.app.zip` | Unzip and open `ProviderUsageTray.app`. |
+| Linux (x64 / ARM64) | `linux-*.tar.gz` | Extract and run `./ProviderUsageTray/ProviderUsageTray`. |
 
-**Important:** A *subscription quota*, a *rate limit* and *prepaid API credits* are different measurements. The app labels them separately and doesn't invent percentages. DeepSeek balance is shown in the popup/dashboard, not as a fake percentage. Kimi's newer plans may not have a weekly quota. Muse's CLI output is parsed conservatively and may need an updated adapter if Meta changes the format.
+The desktop application comes prebuilt; **no desktop Python installation or compilation is required**. The macOS builds are currently unsigned, so you may need to approve them in macOS Privacy & Security. Linux requires a desktop environment with system tray support.
 
-For providers that require an API key, set the relevant environment variable **before starting the app** (then restart it). On Windows, for example, you can use `setx DEEPSEEK_API_KEY "your-key"`, then open a fresh PowerShell window. Never commit keys to Git.
+On first launch, select your providers and choose whether to combine them into one icon.
 
-### Kimi local server
+### Provider authentication
 
-Kimi's local web server provides `GET /api/v1/oauth/usage` with a bearer token. By default the app tries `http://127.0.0.1:58627/api/v1/oauth/usage`. Start the Kimi web server, obtain its access token, and set `KIMI_SERVER_TOKEN` in the desktop app's environment. If its port differs, change the endpoint under Advanced. The app does not start Kimi or read its secrets automatically.
+The app reuses existing logins where supported; it does not require a separately hosted bridge.
 
-### Built-in account readers
+| Providers | What to have ready |
+| --- | --- |
+| **Codex, Claude** | Signed-in CLIs. On Windows, these run in WSL with Python 3 installed; on macOS/Linux, use native CLI logins. |
+| **Muse, Gemini, GitHub Copilot, Grok** | Their respective signed-in CLIs (Copilot uses `gh auth login`). |
+| **Cursor, Windsurf** | Signed-in desktop editors; some readings come from local cached data. |
+| **Qwen Cloud, Perplexity** | Supported signed-in browser sessions. Qwen targets its individual Token Plan; Perplexity reports credits, not search limits. |
+| **Kimi Code** | Its local usage server and `KIMI_SERVER_TOKEN`. |
+| **DeepSeek, OpenRouter** | `DEEPSEEK_API_KEY` or an `OPENROUTER_API_KEY` management key, respectively. |
 
-The tray includes its own Gemini and Copilot account readers. It executes the readers as short-lived subprocesses and **never runs a third-party bridge service**. On Windows, sign in to the relevant CLI **inside the configured WSL distribution**; on macOS/Linux, sign in natively. Gemini quota reads require a current CLI OAuth access token; if it has expired, open the CLI to renew it. These endpoints may change and are not guaranteed for every account.
+Some providers use undocumented interfaces and may stop reporting usage when those interfaces change. The app shows unavailable readings rather than guessing. Credentials are not written to tray settings. Keep API keys out of Git.
 
-The five additional providers now have opt-in readers built into the desktop app. They need no localhost bridge. Their provider-specific setup and caveats are listed below. Authentication is inherited from an existing CLI, editor or browser session rather than being stored in the tray settings.
+## Development
 
+Run from the repository root with **Python 3.10+**:
 
-## Usage and controls
-
-- **Individual icons:** coloured percentages remaining (or `--` if unavailable). Hover over an icon to see its reported quota windows and reset dates in your computer's local timezone. Gemini shows per-model quotas; Copilot shows monthly quotas. Optionally show weekly icons too.
-- **Merged mode:** one coloured icon. Hover for a compact summary of local reset times. Operating systems limit tray tooltip length, so if you're tracking many providers, click for the full quick view (with reset dates for all providers).
-- **Dashboard:** opened only with **Open dashboard**, not by clicking the tray icon.
-- **Settings:** choose providers, enable merged mode, configure optional Muse/Kimi endpoints, and configure login startup.
-- Both original `/get` APIs remain available at `http://127.0.0.1:3789/get` and `http://127.0.0.1:3790/get` while running.
-
-If a value is `--`, hover for details or open the quick view. The Claude usage endpoint is undocumented and can be rate-limited. On GNOME/Wayland, install an AppIndicator extension if your system doesn't show tray icons.
-
-## Automated GitHub Releases
-
-On every pushed version tag (for example `v3.3.2`), `.github/workflows/release.yml` builds six native packages, smoke-tests the bundled UI and backend entrypoints, checks that all six artifacts exist, and publishes them together with SHA-256 checksums to GitHub Releases. You can also run that workflow manually for an existing tag. Release builds require no local compilation; the binaries are currently unsigned and not notarised.
-
-To publish from a clean committed repository:
-
-```bash
-git tag v3.3.2
-git push origin v3.3.2
+```powershell
+# Windows
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-windows.ps1
 ```
 
-## Tests
+```bash
+# macOS
+./start-macos.sh
+
+# Linux
+./start-linux.sh
+```
+
+The source launchers set up the desktop dependency on first run. Windows Codex/Claude backends require an authenticated WSL distribution (Debian by default; configurable in Settings).
+
+Run the tests:
 
 ```bash
 python3 -m unittest discover -s desktop/tests -v
@@ -94,17 +89,10 @@ python3 -m unittest discover -s work-codex-usage-api/tests -v
 python3 -m unittest discover -s claude-usage-api/tests -v
 ```
 
-MIT licensed. Unaffiliated with the listed providers.
+Version tags (`v*`) trigger [automated releases](.github/workflows/release.yml) for Windows, macOS, and Linux on x64 and ARM64, with SHA-256 checksums.
 
+## Contributing
 
-## Additional direct account readers (v3.3.0)
+Issues and pull requests are welcome, particularly for provider compatibility, platform-specific bugs, and more reliable usage readers. Include your OS, provider, and relevant error output; **remove tokens, cookies, and other credentials** before sharing logs.
 
-Enable providers in **Choose providers / Settings**. No separate local bridge server is required. Readers reuse the selected provider’s existing local login when available and make read-only requests to that provider. Selecting a provider authorises the app to read **only that provider’s** existing local credentials/browser session; no cookies, access tokens or API keys are written to settings or returned in the UI.
-
-- **Grok:** sign into the Grok Build CLI (`grok`) on the OS where the reader runs (Debian WSL on Windows). Uses CLI billing endpoint, not xAI developer API keys.
-- **Cursor:** sign into the Cursor editor on your desktop. Reads its local state database read-only, then queries account usage; optional `CURSOR_COOKIE` environment variable if local login is not usable. New X subscriptions can have a shared Grok/Cursor weekly allowance; legacy plans can have monthly allowances.
-- **Windsurf:** sign into the Windsurf editor. Reads its cached plan/quota, so values may lag while the editor is closed. Falls back to named message/flow-action usage counters, never invents reset times.
-- **Qwen:** supported for **Qwen Cloud international individual Token Plan**, not generic Qwen chat or all ModelStudio accounts. Sign into `home.qwencloud.com` in Chrome, Edge or Firefox; optional `QWEN_CLOUD_COOKIE` and `QWEN_CLOUD_SEC_TOKEN` environment variables. The unofficial account gateway may reject sessions.
-- **Perplexity:** sign into `perplexity.ai` in Chrome, Edge or Firefox. Reads recurring/purchased credits, **not** a five-hour/weekly Pro search allowance. Optional `PERPLEXITY_COOKIE` environment variable.
-
-Browser-cookie retrieval uses `browser-cookie3` bundled with the desktop application. Protected profiles or browser-specific encryption may block automatic access; the reader reports that clearly. All these endpoints are undocumented, subject to change, and cannot be verified against an actual subscribed account by CI. The app displays unavailable instead of fabricating a quota.
+MIT licensed. This is an independent project and is not affiliated with the providers it monitors.
