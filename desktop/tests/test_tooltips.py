@@ -66,6 +66,21 @@ class TooltipTests(unittest.TestCase):
         self.assertIn("7d: not available", tip)
         self.assertIn("unavailable", individual_tooltip("claude", {"ok": False, "error": "Offline"}).lower())
 
+    def test_cached_claude_remains_visible_but_is_marked_stale(self):
+        snap = {
+            "ok": True, "stale": True, "last_updated_at": "2026-10-28T10:05:00Z",
+            "five_hour": {"remaining_percent": 63, "resets_at": "2026-10-28T13:00:00Z"},
+            "weekly": {"remaining_percent": 35, "resets_at": "2026-11-01T20:00:00Z"},
+        }
+        tip = individual_tooltip("claude", snap, timezone=self.utc)
+        self.assertIn("cached, not live", tip)
+        self.assertIn("5h: 63%; reset 28 Oct 13:00", tip)
+        self.assertIn("7d: 35%; reset 01 Nov 20:00", tip)
+        self.assertIn("Seen 28 Oct 10:05", tip)
+        self.assertLessEqual(len(tip), MAX_TRAY_TOOLTIP)
+        merged = merged_tooltip(["claude"], {"claude": snap}, timezone=self.utc)
+        self.assertIn("Claude (cached): 5h 63% left / 7d 35% left", merged)
+
     def test_balance_only_has_no_invented_reset_time(self):
         tip = individual_tooltip("deepseek", {"ok": True, "balance_text": "USD 5.50"})
         self.assertIn("USD 5.50", tip)
