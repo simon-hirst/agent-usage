@@ -18,6 +18,8 @@ Provider Usage Tray runs quietly in the background and checks selected providers
 
 A provider may report a five-hour limit, a weekly/monthly allowance, or an API credit balance. These are displayed as separate measurements; unavailable values are never treated as zero.
 
+If Claude usage temporarily fails to refresh, the tray keeps its last successful 5-hour and weekly percentages, dimmed and clearly marked **cached / not live** in the hover text and popup. Those readings persist across app restarts until a fresh reading is available.
+
 ## Architecture
 
 The application is split into a small desktop client, provider readers, and two managed local APIs:
