@@ -14,6 +14,7 @@ for provider in PROVIDERS:
     for field in ('five_hour', 'weekly'):
         for remaining in (None, 0.0, 54.5, 100.0):
             assert not icon_for(provider, field, remaining).isNull()
+assert not icon_for("claude", "five_hour", 62.0, stale=True).isNull()
 assert not combined_icon().isNull()
 settings = load_settings(ROOT / 'nonexistent-settings-for-smoke.json')
 settings['selected_providers'] = ['codex', 'claude', 'deepseek']
