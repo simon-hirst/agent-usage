@@ -52,6 +52,25 @@ def individual_tooltip(provider: str, snapshot: Mapping[str, Any] | None,
     name = PROVIDERS[provider]["short"]
     if not snapshot or snapshot.get("ok") is not True:
         return f"{name} (local time)\nUsage unavailable; reset times unknown"
+    if snapshot.get("stale"):
+        lines = [f"{name} (cached, not live)"]
+        for key, label in (("five_hour", "5h"), ("weekly", "7d")):
+            item = _window(snapshot, key)
+            if item is None:
+                lines.append(f"{label}: unavailable")
+            else:
+                reset = local_reset_time(item.get("resets_at"), compact=True, timezone=timezone)
+                pct = item.get("remaining_percent")
+                lines.append(f"{label}: {pct:g}%; reset {reset or '?'}")
+        seen = local_reset_time(snapshot.get("last_updated_at"), compact=True, timezone=timezone)
+        lines.append(f"Seen {seen or 'unknown'}")
+        tip = "\n".join(lines)
+        if len(tip) > MAX_TRAY_TOOLTIP:
+            lines = [f"{name} (cached, not live)"]
+            for key, label in (("five_hour", "5h"), ("weekly", "7d")):
+                lines.append(f"{label}: {_remaining(_window(snapshot, key))}")
+            lines.append(f"Seen {seen or 'unknown'}")
+        return "\n".join(lines)
     model_quotas = snapshot.get('model_quotas')
     if provider in ('gemini', 'copilot') and isinstance(model_quotas, list) and model_quotas:
         lines = [f"{name} quota (local time)"]
@@ -98,6 +117,13 @@ def _merged_line(provider: str, snapshot: Mapping[str, Any] | None,
     name = PROVIDERS[provider]["short"]
     if not snapshot or snapshot.get("ok") is not True:
         return f"{name}: unavailable"
+    if snapshot.get("stale"):
+        pieces = []
+        for key, label in (("five_hour", "5h"), ("weekly", "7d")):
+            value = _window(snapshot, key)
+            if value:
+                pieces.append(f"{label} {_remaining(value)}")
+        return f"{name} (cached): " + (" / ".join(pieces) if pieces else "unavailable")
     if PROVIDERS[provider]['source'] == 'dashboard':
         return f"{name}: open account usage"
     pieces = []
