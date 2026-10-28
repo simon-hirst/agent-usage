@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Keep LF line endings on Windows: see .gitattributes.
 # Managed Windows/WSL backend. Parent tray holds stdin open, on Exit it sends
 # "stop" and closes stdin. If the parent crashes, stdin EOF stops the backend.
 set -uo pipefail

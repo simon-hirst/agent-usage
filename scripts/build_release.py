@@ -28,6 +28,16 @@ SOURCES = [
 ]
 
 
+
+def validate_wsl_shell_sources(paths: list[Path]) -> None:
+    """Never publish a Windows bundle containing Bash files converted to CRLF."""
+    for path in paths:
+        if b"\r" in path.read_bytes():
+            raise RuntimeError(
+                f"{path} has Windows CRLF line endings; Bash in WSL needs LF. "
+                "Use Git .gitattributes (text eol=lf) and re-checkout the shell scripts."
+            )
+
 def build(version: str, target: str, artifact_dir: Path) -> Path:
     system = platform.system()
     expected_os = target.split('-')[0]
@@ -39,6 +49,7 @@ def build(version: str, target: str, artifact_dir: Path) -> Path:
         raise ValueError(f'ARM64 build requested on {arch}')
     if target.endswith('-x64') and arch not in ('amd64', 'x86_64'):
         raise ValueError(f'x64 build requested on {arch}')
+    validate_wsl_shell_sources([ROOT / 'desktop/managed-wsl.sh', ROOT / 'desktop/direct-usage.sh'])
     release_name = f'provider-usage-tray-{version}-{target}'
     workdir = ROOT / '.release-build'
     dist = workdir / 'dist'

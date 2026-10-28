@@ -1,0 +1,3 @@
+# Bash scripts must remain LF, including in Git for Windows checkouts.
+# The desktop app executes these scripts inside WSL. CRLF makes Bash fail.
+*.sh text eol=lf
