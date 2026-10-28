@@ -21,13 +21,14 @@ from PySide6.QtWidgets import (
 )
 
 from .autostart import enabled as autostart_enabled, set_enabled as set_autostart
+from .claude_cache import ClaudeLastKnown
 from .core import ROOT, PROVIDERS, SERVICES, USAGE_PAGES, app_data_dir, load_settings, save_settings, secure_child_env
 from .processes import BackendManager
 from .providers import icon_number, is_local_url, normalize, parse_muse_usage, normalize_direct_result, parse_direct_output
 from .tooltips import individual_tooltip, merged_tooltip, local_reset_time
 
 
-def icon_for(service: str, field: str, remaining: float | None) -> QIcon:
+def icon_for(service: str, field: str, remaining: float | None, *, stale: bool = False) -> QIcon:
     """Small transparent, coloured numeric icon, never an invented usage figure."""
     pix = QPixmap(64, 64)
     pix.fill(Qt.GlobalColor.transparent)
@@ -40,7 +41,10 @@ def icon_for(service: str, field: str, remaining: float | None) -> QIcon:
     for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
         painter.setPen(QColor(0, 0, 0, 80))
         painter.drawText(rect.adjusted(dx, dy, dx, dy), Qt.AlignmentFlag.AlignCenter, value)
-    painter.setPen(QColor(PROVIDERS[service]["colour"]))
+    colour = QColor(PROVIDERS[service]["colour"])
+    if stale:
+        colour.setAlpha(155)  # A cached reading is still visible, but not presented as live.
+    painter.setPen(colour)
     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, value)
     painter.end()
     return QIcon(pix)
@@ -98,7 +102,11 @@ def usage_summary(snapshot: dict[str, Any] | None, include_weekly: bool = True,
         fragments.append(str(snapshot["balance_text"]))
     if snapshot.get("credit_percent") is not None:
         fragments.append(f"{snapshot['credit_percent']:g}% of credit allowance left")
-    return " · ".join(fragments) or "No quota windows available"
+    summary = " · ".join(fragments) or "No quota windows available"
+    if snapshot.get("stale"):
+        last = local_reset_time(snapshot.get("last_updated_at")) or "unknown"
+        return f"Last known (not live; updated {last} local) — {summary}"
+    return summary
 
 
 class ProviderSelection(QDialog):
@@ -319,6 +327,11 @@ class Dashboard(QDialog):
                 details.setWordWrap(True)
                 box.addWidget(details)
             else:
+                if snap.get("stale"):
+                    when = local_reset_time(snap.get("last_updated_at")) or "unknown"
+                    warning = QLabel(f"Last known reading (not live) · updated {when} local")
+                    warning.setWordWrap(True)
+                    box.addWidget(warning)
                 found = False
                 for key, label in (("five_hour", "5-hour"), ("weekly", "Weekly"), ("monthly", "Monthly"), ("daily", "Daily")):
                     value = snap.get(key)
@@ -365,7 +378,11 @@ class TrayController:
         self.manager = BackendManager(wsl_distro=settings["wsl_distro"])
         self.manager.enabled = settings["manage_backends"]
         self.manager.set_selected(settings["selected_providers"])
+        self.claude_cache = ClaudeLastKnown(app_data_dir() / "claude-last-known.json")
         self.snapshots: dict[str, dict[str, Any]] = {}
+        last_claude = self.claude_cache.fallback("Waiting for current Claude usage")
+        if last_claude:
+            self.snapshots["claude"] = last_claude
         self.net = QNetworkAccessManager(app)
         self.trays: dict[tuple[str, str], QSystemTrayIcon] = {}
         self.menus: list[QMenu] = []
@@ -447,7 +464,7 @@ class TrayController:
                 remaining = self.icon_remaining(service, snap, field)
                 if remaining is None and field == "five_hour" and service == "openrouter" and snap and snap.get("ok"):
                     remaining = snap.get("credit_percent")
-                tray.setIcon(icon_for(service, field, remaining))
+                tray.setIcon(icon_for(service, field, remaining, stale=bool(snap and snap.get("stale"))))
                 tray.setToolTip(individual_tooltip(service, snap))
                 self._configure_tray(tray, (service, field))
                 tray.show() if self.tray_available else None
@@ -711,6 +728,8 @@ class TrayController:
         self.set_snapshot(service, {"ok": False, "error": error[:220], "five_hour": None, "weekly": None})
 
     def set_snapshot(self, service: str, result: dict[str, Any]):
+        if service == "claude":
+            result = self.claude_cache.apply(result)
         self.snapshots[service] = result
         for field in ("five_hour", "weekly"):
             tray = self.trays.get((service, field))
@@ -720,7 +739,7 @@ class TrayController:
             remaining = self.icon_remaining(service, result, field)
             if remaining is None and field == "five_hour" and service == "openrouter" and result.get("ok"):
                 remaining = result.get("credit_percent")
-            tray.setIcon(icon_for(service, field, remaining))
+            tray.setIcon(icon_for(service, field, remaining, stale=bool(result.get("stale"))))
             tray.setToolTip(individual_tooltip(service, result))
         self.update_merged_tooltip()
         if self.quick.isVisible():
