@@ -92,16 +92,20 @@ def build(version: str, target: str, artifact_dir: Path) -> Path:
     if system == 'Darwin':
         artifact = artifact_dir / f'{release_name}.app.zip'
         subprocess.run(['ditto', '-c', '-k', '--keepParent', str(bundle), str(artifact)], check=True)
+        with zipfile.ZipFile(artifact, 'a', zipfile.ZIP_DEFLATED) as out:
+            out.write(ROOT / 'stop-macos.sh', 'stop-macos.sh')
     elif system == 'Windows':
         artifact = artifact_dir / f'{release_name}.zip'
         with zipfile.ZipFile(artifact, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as out:
             for file in bundle.rglob('*'):
                 if file.is_file():
                     out.write(file, file.relative_to(dist))
+            out.write(ROOT / 'stop-windows.ps1', 'stop-windows.ps1')
     else:
         artifact = artifact_dir / f'{release_name}.tar.gz'
         with tarfile.open(artifact, 'w:gz') as out:
             out.add(bundle, arcname=NAME)
+            out.add(ROOT / 'stop-linux.sh', arcname='stop-linux.sh')
     print(f'BUILT {artifact} ({artifact.stat().st_size:,} bytes)', flush=True)
     return artifact
 

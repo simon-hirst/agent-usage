@@ -83,6 +83,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-windows.ps1
 
 The source launchers set up the desktop dependency on first run. Windows Codex/Claude backends require an authenticated WSL distribution (Debian by default; configurable in Settings).
 
+### Stop the tray
+
+Run the matching stop script from the repository root. The scripts are also included next to the applications in release archives.
+
+```powershell
+# Windows
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop-windows.ps1
+```
+
+```bash
+# macOS
+./stop-macos.sh
+
+# Linux
+./stop-linux.sh
+```
+
+They terminate **Provider Usage Tray**, including hung tray processes. The existing supervisors shut down only the backends that the tray owns; other Python processes, WSL distributions and independently started API services are left alone. Running a stop script when the tray isn't open is harmless.
+
 Run the tests:
 
 ```bash
